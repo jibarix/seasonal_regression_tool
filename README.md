@@ -7,15 +7,18 @@ A modular and efficient pipeline for time series analysis, feature engineering, 
 ```
 project/
 ├── data/
-│   ├── processor.py       - Data loading and preprocessing
-│   ├── transformations.py - Time series transformations
+│   ├── processor.py           - Data loading and preprocessing
+│   ├── transformations.py     - Time series transformations
 │   ├── feature_engineering.py - Feature creation with Fourier terms
 │   └── dimension_reduction.py - PCA and feature selection
-├── modeling.py            - Model training and evaluation
-├── visualization.py       - Time series visualization
-├── main.py                - Pipeline orchestration
-├── data_input_sample.csv  - Example data file
-└── README.md              - Project documentation
+├── models/
+│   ├── modeling.py            - Model training and evaluation
+│   └── visualization.py       - Time series visualization
+├── main.py                    - Pipeline orchestration
+├── data_input_sample.csv      - Example data file
+├── implementation_data.md     - Dataset documentation
+├── .gitignore                 - Git ignore configuration
+└── README.md                  - Project documentation
 ```
 
 ## Key Features
@@ -40,6 +43,18 @@ project/
   - Seasonal decomposition visualization
   - Feature importance and PCA component visualization
   - Prediction and error analysis plots
+
+## Dataset Information
+
+The project works with a comprehensive economic indicators dataset that includes:
+- Monthly and quarterly economic indicators
+- Automotive industry metrics (sales, manufacturing, inventories)
+- Financial indicators (federal funds rate, equity risk premium)
+- Labor statistics
+- Price indices
+- GDP and forecasts
+
+Detailed information about the dataset is available in `implementation_data.md`.
 
 ## Requirements
 
@@ -102,7 +117,7 @@ The pipeline produces several outputs in the specified output directory:
 from data.processor import DataLoader
 from data.feature_engineering import engineer_features
 from data.dimension_reduction import reduce_dimensions
-from modeling import train_and_evaluate
+from models.modeling import train_and_evaluate
 
 # Load and prepare data
 loader = DataLoader()
@@ -128,20 +143,22 @@ print(f"R²: {results['test_evaluation']['r2']:.4f}")
 
 ## Project Objectives
 
-This pipeline was designed to address the following key objectives:
+This pipeline was designed to address the following key objectives found in the project roadmap:
+
 1. Select and export data based on target variable availability
-2. Handle missing data appropriately
-3. Check for anomalies and handle different units/scaling
-4. Apply Fourier terms for seasonality modeling
-5. Transform data with log transformations, handling edge cases
-6. Apply lagged variables based on domain knowledge
-7. Perform dimensionality reduction via PCA with proper standardization
-8. Select optimal features from PCA outputs
-9. Run regression models with cross-validation
-10. Evaluate models with multiple metrics
-11. Check residuals for patterns and autocorrelation
-12. Examine PCA loadings to understand key drivers
+2. Limit data based on target data available time period
+3. Handle missing data points with appropriate imputation methods
+4. Check for anomalies and handle different units/scaling
+5. Apply Fourier terms for seasonality modeling
+6. Transform data with log transformations, handling edge cases
+7. Apply lagged variables based on domain knowledge
+8. Perform dimensionality reduction via PCA with proper standardization
+9. Select optimal features from PCA outputs
+10. Run regression models with cross-validation
+11. Evaluate models with multiple metrics
+12. Check residuals for patterns and autocorrelation
+13. Examine PCA loadings to understand key drivers
 
 ## License
 
-[TBU]
+This project is available for educational and research purposes. Please contact the authors for commercial use permissions.
