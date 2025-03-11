@@ -359,6 +359,101 @@ class DataLoader:
         
         return result
     
+    def trim_to_common_date_range(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Trim dataset to the common date range where data is available across columns.
+        
+        Args:
+            df: DataFrame with date column and possibly missing values
+            
+        Returns:
+            DataFrame trimmed to the common date range
+        """
+        # Input validation
+        if df is None:
+            logger.error("Cannot trim date range: DataFrame is None")
+            return df
+            
+        if df.empty:
+            logger.warning("Cannot trim date range: DataFrame is empty")
+            return df.copy()
+            
+        if self.date_col not in df.columns:
+            logger.warning(f"Cannot trim date range: date column '{self.date_col}' not found")
+            return df.copy()
+            
+        # Ensure date column is datetime
+        df[self.date_col] = pd.to_datetime(df[self.date_col])
+        
+        # Get numeric columns (excluding date-related columns)
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        
+        # Skip if no numeric columns found
+        if not numeric_cols:
+            logger.warning("No numeric columns found for trimming")
+            return df.copy()
+            
+        date_related_cols = ['year', 'month', 'quarter', 'month_end', 'quarter_end', 
+                        'Q1', 'Q2', 'Q3', 'Q4', 'day_of_year', 'day_of_month']
+        numeric_cols = [col for col in numeric_cols if col not in date_related_cols]
+        
+        # Skip if all numeric columns are date-related
+        if not numeric_cols:
+            logger.warning("No non-date-related numeric columns found for trimming")
+            return df.copy()
+        
+        # Find the first valid date for each column
+        first_valid_dates = {}
+        last_valid_dates = {}
+        
+        for col in numeric_cols:
+            # Skip columns that are all NaN
+            if df[col].isna().all():
+                continue
+                
+            # Find first non-NaN value - use try/except to handle any issues
+            try:
+                first_valid_idx = df[col].first_valid_index()
+                last_valid_idx = df[col].last_valid_index()
+                
+                if first_valid_idx is not None and last_valid_idx is not None:
+                    first_valid_dates[col] = df.loc[first_valid_idx, self.date_col]
+                    last_valid_dates[col] = df.loc[last_valid_idx, self.date_col]
+            except Exception as e:
+                logger.warning(f"Error finding valid dates for column {col}: {e}")
+                continue
+        
+        if not first_valid_dates or not last_valid_dates:
+            logger.warning("No valid data ranges found in any column")
+            return df.copy()
+            
+        try:
+            # Determine the latest start date and earliest end date
+            latest_start = max(first_valid_dates.values())
+            earliest_end = min(last_valid_dates.values())
+            
+            # Check if the range makes sense
+            if latest_start > earliest_end:
+                logger.warning(f"Invalid date range: {latest_start} > {earliest_end}")
+                return df.copy()
+            
+            # Trim the DataFrame to this range
+            trimmed_df = df[(df[self.date_col] >= latest_start) & (df[self.date_col] <= earliest_end)].copy()
+            
+            logger.info(f"Trimmed data from {df[self.date_col].min()} - {df[self.date_col].max()} to {latest_start} - {earliest_end}")
+            logger.info(f"Rows reduced from {len(df)} to {len(trimmed_df)}")
+            
+            # Ensure we're not returning an empty dataframe
+            if len(trimmed_df) == 0:
+                logger.warning("Trimming resulted in empty DataFrame. Returning original data.")
+                return df.copy()
+                
+            return trimmed_df
+            
+        except Exception as e:
+            logger.error(f"Error during date trimming: {e}")
+            return df.copy()
+    
     def handle_missing_values(self, df: pd.DataFrame, method: str = 'mean',
                              fill_groups: Optional[List[str]] = None) -> pd.DataFrame:
         """

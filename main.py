@@ -115,6 +115,9 @@ def load_and_prepare_data(args, logger):
     frequency = data_loader.detect_frequency(df)
     logger.info(f"Detected data frequency: {frequency}")
     
+    # Trim dataset to common date range where data is available
+    df = data_loader.trim_to_common_date_range(df)
+    
     # Handle missing values
     if frequency in ['monthly', 'quarterly']:
         fill_groups = ['year', 'month' if frequency == 'monthly' else 'quarter']
