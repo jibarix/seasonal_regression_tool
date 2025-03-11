@@ -313,35 +313,44 @@ def engineer_features(df: pd.DataFrame,
         key_indicators = [col for col in numeric_cols if any(key in col for key in 
                        ['sales', 'rate', 'price', 'index', 'gdp', 'orders', 'production'])]
         
-        # Always include target
+        # Always include target for lags only (not other transformations)
         if target_col not in key_indicators and target_col in result.columns:
-            key_indicators.append(target_col)
+            logger.info(f"Creating lag features for target variable: {target_col}")
+            # Create lags just for the target
+            target_lags = create_lagged_features(result, [target_col], list(range(1, max_lag + 1)))
+            # Add target lags back to the result
+            for lag in range(1, max_lag + 1):
+                lag_col = f"{target_col}_lag_{lag}"
+                if lag_col in target_lags.columns:
+                    result[lag_col] = target_lags[lag_col]
         
         logger.info(f"Creating lag features for {len(key_indicators)} key indicators")
         result = create_lagged_features(result, key_indicators, list(range(1, max_lag + 1)))
     
-    # Create rolling window features for key indicators only
+    # Create rolling window features for key indicators only, but NOT for target
     if create_rolling:
-        # Use same key indicators as for lags
+        # Use same key indicators as for lags, but exclude target
         key_indicators = [col for col in numeric_cols if any(key in col for key in 
                        ['sales', 'rate', 'price', 'index', 'gdp', 'orders', 'production'])]
         
-        if target_col not in key_indicators and target_col in result.columns:
-            key_indicators.append(target_col)
+        # Remove target from rolling feature creation
+        if target_col in key_indicators:
+            key_indicators.remove(target_col)
         
         logger.info(f"Creating rolling features for {len(key_indicators)} key indicators")
         # Limit to fewer windows and just mean (not std) to reduce feature count
         result = create_rolling_features(result, key_indicators, windows=[3, 6, 12], 
                                        functions=['mean'])
     
-    # Apply log transformation selectively
+    # Apply log transformation selectively, but NOT to target
     if log_transform:
         # Apply log transform only to variables that typically benefit
         log_candidate_cols = [col for col in numeric_cols if any(key in col for key in 
                            ['sales', 'price', 'production', 'consumption', 'orders', 'gdp', 'value'])]
         
-        if target_col not in log_candidate_cols and target_col in result.columns:
-            log_candidate_cols.append(target_col)
+        # Remove target from log transform candidates
+        if target_col in log_candidate_cols:
+            log_candidate_cols.remove(target_col)
         
         logger.info(f"Applying log transform to {len(log_candidate_cols)} columns")
         result = safe_log_transform(result, log_candidate_cols)

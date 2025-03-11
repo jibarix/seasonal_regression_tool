@@ -348,6 +348,9 @@ def reduce_dimensions(df: pd.DataFrame,
     upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
     to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
     
+    # Create a copy of the original feature_cols before modifying
+    all_valid_features = feature_cols.copy()
+    
     if to_drop:
         logger.info(f"Removing {len(to_drop)} highly correlated features")
         reduced_features = [col for col in feature_cols if col not in to_drop]
@@ -356,7 +359,7 @@ def reduce_dimensions(df: pd.DataFrame,
     logger.info(f"Feature count reduced from {orig_feature_count} to {len(feature_cols)} after correlation filtering")
     
     metadata = {
-        'original_features': feature_cols.copy(),
+        'original_features': all_valid_features,
         'pca_applied': False,
         'feature_selection_method': feature_selection_method,
         'selected_features': []
@@ -367,7 +370,7 @@ def reduce_dimensions(df: pd.DataFrame,
     result = df[result_cols].copy()
     
     # Apply PCA if requested
-    if use_pca:
+    if use_pca and feature_cols:  # Only proceed with PCA if we have features
         # Calculate initial PCA to determine optimal number of components
         pc_df, pca_obj, scaler, valid_features = perform_pca(
             df, feature_cols, variance_threshold=1.0  # Get all components first
@@ -403,32 +406,44 @@ def reduce_dimensions(df: pd.DataFrame,
                 # Use PCA components for feature selection
                 feature_cols = pc_df.columns.tolist()
     
-    # Apply feature selection - now use result directly which contains the PCA components
+    # Add remaining features directly to result if not using PCA
+    if not use_pca and feature_cols:
+        for col in feature_cols:
+            if col in df.columns:
+                result[col] = df[col]
+    
+    # Apply feature selection - now use result directly which contains the PCA components or original features
     selected_features = []
     
-    if feature_selection_method == 'mutual_info':
-        selected_features = select_features_mutual_info(
-            result, 
-            target_col, 
-            feature_cols,
-            top_n=top_n_features
-        )
-    elif feature_selection_method == 'f_regression':
-        selected_features = select_features_f_regression(
-            result, 
-            target_col, 
-            feature_cols,
-            top_n=top_n_features
-        )
-    elif feature_selection_method == 'lasso':
-        selected_features = select_features_lasso(
-            result, 
-            target_col, 
-            feature_cols,
-            alpha=lasso_alpha
-        )
+    # Ensure we have valid feature columns in the result DataFrame before feature selection
+    available_features = [col for col in feature_cols if col in result.columns]
+    
+    if available_features:
+        if feature_selection_method == 'mutual_info':
+            selected_features = select_features_mutual_info(
+                result, 
+                target_col, 
+                available_features,
+                top_n=top_n_features
+            )
+        elif feature_selection_method == 'f_regression':
+            selected_features = select_features_f_regression(
+                result, 
+                target_col, 
+                available_features,
+                top_n=top_n_features
+            )
+        elif feature_selection_method == 'lasso':
+            selected_features = select_features_lasso(
+                result, 
+                target_col, 
+                available_features,
+                alpha=lasso_alpha
+            )
+        else:
+            logger.warning(f"Unknown feature selection method: {feature_selection_method}")
     else:
-        logger.warning(f"Unknown feature selection method: {feature_selection_method}")
+        logger.warning("No valid feature columns found for feature selection")
     
     # Update metadata
     metadata['selected_features'] = selected_features
@@ -438,6 +453,24 @@ def reduce_dimensions(df: pd.DataFrame,
         selected_features = metadata['pca_components'][:min(top_n_features, len(metadata['pca_components']))]
         metadata['selected_features'] = selected_features
         logger.info(f"No features selected, using top {len(selected_features)} PCA components")
+    
+    # ADDED FIX: If still no features, use some of the original numeric columns
+    if not selected_features:
+        numeric_cols = df.select_dtypes(include=['number']).columns.tolist()
+        # Remove date and target columns
+        if date_col in numeric_cols:
+            numeric_cols.remove(date_col)
+        if target_col in numeric_cols:
+            numeric_cols.remove(target_col)
+        # Use some original features as fallback
+        fallback_features = numeric_cols[:min(top_n_features, len(numeric_cols))]
+        # Add these fallback features to the result DataFrame
+        for col in fallback_features:
+            if col in df.columns and col not in result.columns:
+                result[col] = df[col]
+        selected_features = fallback_features
+        metadata['selected_features'] = selected_features
+        logger.info(f"Using {len(selected_features)} original features as fallback")
     
     return result, metadata
 
