@@ -286,7 +286,7 @@ def reduce_dimensions(df: pd.DataFrame,
         date_col: Name of date column
         use_pca: Whether to use PCA
         pca_variance_threshold: Minimum cumulative explained variance
-        feature_selection_method: Method for feature selection ('mutual_info', 'f_regression', 'lasso')
+        feature_selection_method: Method for feature selection
         top_n_features: Number of top features to select
         lasso_alpha: Alpha parameter for Lasso feature selection
         
@@ -307,6 +307,28 @@ def reduce_dimensions(df: pd.DataFrame,
             feature_cols.remove(date_col)
         if target_col in feature_cols:
             feature_cols.remove(target_col)
+            
+        # Remove date-related columns
+        date_related_cols = ['year', 'month', 'quarter', 'month_end', 'quarter_end', 
+                           'Q1', 'Q2', 'Q3', 'Q4', 'day_of_year', 'day_of_month', 
+                           'week_of_year']
+        feature_cols = [col for col in feature_cols if col not in date_related_cols]
+    
+    # Filter out highly correlated features before PCA
+    orig_feature_count = len(feature_cols)
+    feature_df = df[feature_cols].copy()
+    
+    # Simple correlation filtering
+    corr_matrix = feature_df.corr().abs()
+    upper = corr_matrix.where(np.triu(np.ones(corr_matrix.shape), k=1).astype(bool))
+    to_drop = [column for column in upper.columns if any(upper[column] > 0.95)]
+    
+    if to_drop:
+        logger.info(f"Removing {len(to_drop)} highly correlated features")
+        reduced_features = [col for col in feature_cols if col not in to_drop]
+        feature_cols = reduced_features
+    
+    logger.info(f"Feature count reduced from {orig_feature_count} to {len(feature_cols)} after correlation filtering")
     
     metadata = {
         'original_features': feature_cols.copy(),
@@ -321,47 +343,60 @@ def reduce_dimensions(df: pd.DataFrame,
     
     # Apply PCA if requested
     if use_pca:
-        # Perform PCA
-        pc_df, pca, scaler, valid_features = perform_pca(
-            df, feature_cols, variance_threshold=pca_variance_threshold
+        # Calculate initial PCA to determine optimal number of components
+        pc_df, pca_obj, scaler, valid_features = perform_pca(
+            df, feature_cols, variance_threshold=1.0  # Get all components first
         )
         
-        if pca is not None:
-            # Add PCA components to result
-            result = pd.concat([result, pc_df], axis=1)
+        if pca_obj is not None:  # Changed from pre_pca to pca_obj
+            # Get components that explain up to threshold variance
+            explained_variance = np.cumsum(pca_obj.explained_variance_ratio_)  # Use pca_obj, not pc_df
+            n_components = np.argmax(explained_variance >= pca_variance_threshold) + 1
             
-            # Analyze PCA loadings
-            pca_analysis = analyze_pca_loadings(pca, valid_features)
+            logger.info(f"Using {n_components} PCA components to explain {pca_variance_threshold*100:.1f}% of variance")
             
-            # Update metadata
-            metadata['pca_applied'] = True
-            metadata['pca_components'] = pc_df.columns.tolist()
-            metadata['pca_explained_variance'] = pca.explained_variance_ratio_.tolist()
-            metadata['pca_loading_analysis'] = pca_analysis
+            # Now perform PCA with the determined number of components
+            pc_df, pca, scaler, valid_features = perform_pca(
+                df, feature_cols, n_components=n_components
+            )
             
-            # Use PCA components for feature selection
-            feature_cols = pc_df.columns.tolist()
+            if pca is not None:
+                # Add PCA components to result
+                result = pd.concat([result, pc_df], axis=1)
+                
+                # Analyze PCA loadings
+                pca_analysis = analyze_pca_loadings(pca, valid_features)
+                
+                # Update metadata
+                metadata['pca_applied'] = True
+                metadata['pca_components'] = pc_df.columns.tolist()
+                metadata['pca_explained_variance'] = pca.explained_variance_ratio_.tolist()
+                metadata['pca_loading_analysis'] = pca_analysis
+                metadata['n_components_used'] = n_components
+                
+                # Use PCA components for feature selection
+                feature_cols = pc_df.columns.tolist()
     
-    # Apply feature selection
+    # Apply feature selection - now use result directly which contains the PCA components
     selected_features = []
     
     if feature_selection_method == 'mutual_info':
         selected_features = select_features_mutual_info(
-            pd.concat([result, df[feature_cols]], axis=1), 
+            result, 
             target_col, 
             feature_cols,
             top_n=top_n_features
         )
     elif feature_selection_method == 'f_regression':
         selected_features = select_features_f_regression(
-            pd.concat([result, df[feature_cols]], axis=1), 
+            result, 
             target_col, 
             feature_cols,
             top_n=top_n_features
         )
     elif feature_selection_method == 'lasso':
         selected_features = select_features_lasso(
-            pd.concat([result, df[feature_cols]], axis=1), 
+            result, 
             target_col, 
             feature_cols,
             alpha=lasso_alpha
@@ -372,10 +407,11 @@ def reduce_dimensions(df: pd.DataFrame,
     # Update metadata
     metadata['selected_features'] = selected_features
     
-    # Add selected features to result if they're not already there
-    for feature in selected_features:
-        if feature in df.columns and feature not in result.columns:
-            result[feature] = df[feature]
+    # If no features were selected but we have PCA components, use the top components
+    if not selected_features and 'pca_components' in metadata:
+        selected_features = metadata['pca_components'][:min(top_n_features, len(metadata['pca_components']))]
+        metadata['selected_features'] = selected_features
+        logger.info(f"No features selected, using top {len(selected_features)} PCA components")
     
     return result, metadata
 

@@ -49,10 +49,12 @@ def parse_arguments():
                         help='Comma-separated list of Fourier periods')
     parser.add_argument('--fourier-harmonics', type=int, default=2,
                         help='Number of Fourier harmonics')
-    parser.add_argument('--max-lag', type=int, default=6,
+    parser.add_argument('--max-lag', type=int, default=3,  # Reduced from 6 to 3
                         help='Maximum lag for lagged features')
     parser.add_argument('--use-log', action='store_true',
                         help='Apply log transformation to features')
+    parser.add_argument('--respect-existing-features', action='store_true', default=True,
+                        help='Respect existing date features in the dataset')
                         
     # Dimension reduction arguments
     parser.add_argument('--use-pca', action='store_true',
@@ -62,11 +64,11 @@ def parse_arguments():
     parser.add_argument('--feature-selection', type=str, default='mutual_info',
                         choices=['mutual_info', 'f_regression', 'lasso'],
                         help='Feature selection method')
-    parser.add_argument('--top-n-features', type=int, default=10,
+    parser.add_argument('--top-n-features', type=int, default=20,  # Increased from 10 to 20
                         help='Number of top features to select')
                         
     # Modeling arguments
-    parser.add_argument('--model-type', type=str, default='linear',
+    parser.add_argument('--model-type', type=str, default='randomforest',  # Changed default from linear to randomforest
                         choices=['linear', 'ridge', 'lasso', 'elasticnet', 'randomforest', 'gbm'],
                         help='Type of model to train')
     parser.add_argument('--test-size', type=float, default=0.2,

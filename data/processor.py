@@ -305,13 +305,14 @@ class DataLoader:
     
     def add_time_variables(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Add time-related variables to a DataFrame for time series analysis.
+        Add time-related variables to a DataFrame for time series analysis,
+        only if they don't already exist in the data.
         
         Args:
             df: DataFrame containing date column
             
         Returns:
-            DataFrame with additional time variables
+            DataFrame with additional time variables if needed
         """
         if df.empty:
             return df
@@ -322,30 +323,39 @@ class DataLoader:
         # Ensure date column is datetime
         result[self.date_col] = pd.to_datetime(result[self.date_col])
         
-        # Add year
-        result['year'] = result[self.date_col].dt.year
+        # Only add year if it doesn't exist
+        if 'year' not in result.columns:
+            result['year'] = result[self.date_col].dt.year
         
-        # Add month (1-12)
-        result['month'] = result[self.date_col].dt.month
+        # Only add month if it doesn't exist
+        if 'month' not in result.columns:
+            result['month'] = result[self.date_col].dt.month
         
-        # Add month name
-        result['month_name'] = result[self.date_col].dt.strftime('%b')
+        # Only add month_name if it doesn't exist
+        if 'month_name' not in result.columns:
+            result['month_name'] = result[self.date_col].dt.strftime('%b')
         
-        # Add month end date
-        result['month_end'] = result[self.date_col] + pd.offsets.MonthEnd(0)
+        # Only add month_end if it doesn't exist
+        if 'month_end' not in result.columns:
+            result['month_end'] = result[self.date_col] + pd.offsets.MonthEnd(0)
         
-        # Add quarter number (1-4)
-        result['quarter'] = result[self.date_col].dt.quarter
+        # Only add quarter if it doesn't exist
+        if 'quarter' not in result.columns:
+            result['quarter'] = result[self.date_col].dt.quarter
         
-        # Add quarter end date
-        result['quarter_end'] = result[self.date_col] + pd.offsets.QuarterEnd(0)
+        # Only add quarter_end if it doesn't exist
+        if 'quarter_end' not in result.columns:
+            result['quarter_end'] = result[self.date_col] + pd.offsets.QuarterEnd(0)
         
-        # Add dummy variables for quarters
-        for q in range(1, 5):
-            result[f'Q{q}'] = (result['quarter'] == q).astype(int)
+        # Add dummy variables for quarters only if they don't exist
+        quarter_cols_exist = all(f'Q{q}' in result.columns for q in range(1, 5))
+        if not quarter_cols_exist:
+            for q in range(1, 5):
+                result[f'Q{q}'] = (result['quarter'] == q).astype(int)
         
-        # Add period label
-        result['period'] = result[self.date_col].dt.strftime('%b %Y')
+        # Only add period if it doesn't exist
+        if 'period' not in result.columns:
+            result['period'] = result[self.date_col].dt.strftime('%b %Y')
         
         return result
     

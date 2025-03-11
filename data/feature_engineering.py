@@ -156,7 +156,7 @@ def safe_log_transform(df: pd.DataFrame, columns: List[str], offset: float = 1.0
 
 def create_date_features(df: pd.DataFrame, date_col: str = 'date') -> pd.DataFrame:
     """
-    Extract additional date features from the date column.
+    Extract additional date features from the date column only if they don't already exist.
     
     Args:
         df: DataFrame containing date column
@@ -177,19 +177,35 @@ def create_date_features(df: pd.DataFrame, date_col: str = 'date') -> pd.DataFra
     # Ensure date column is datetime
     result[date_col] = pd.to_datetime(result[date_col])
     
-    # Extract date components
-    result['year'] = result[date_col].dt.year
-    result['month'] = result[date_col].dt.month
-    result['quarter'] = result[date_col].dt.quarter
-    result['day_of_year'] = result[date_col].dt.dayofyear
-    result['day_of_month'] = result[date_col].dt.day
-    result['week_of_year'] = result[date_col].dt.isocalendar().week
+    # Extract date components only if they don't exist
+    if 'year' not in result.columns:
+        result['year'] = result[date_col].dt.year
+        
+    if 'month' not in result.columns:
+        result['month'] = result[date_col].dt.month
+        
+    if 'quarter' not in result.columns:
+        result['quarter'] = result[date_col].dt.quarter
     
-    # Create cyclical features for month and quarter
-    result['month_sin'] = np.sin(2 * np.pi * result['month'] / 12)
-    result['month_cos'] = np.cos(2 * np.pi * result['month'] / 12)
-    result['quarter_sin'] = np.sin(2 * np.pi * result['quarter'] / 4)
-    result['quarter_cos'] = np.cos(2 * np.pi * result['quarter'] / 4)
+    # These are less common in existing datasets, so add them
+    if 'day_of_year' not in result.columns:
+        result['day_of_year'] = result[date_col].dt.dayofyear
+        
+    if 'day_of_month' not in result.columns:
+        result['day_of_month'] = result[date_col].dt.day
+    
+    # Create cyclical features for month and quarter only if they don't exist
+    if 'month_sin' not in result.columns:
+        result['month_sin'] = np.sin(2 * np.pi * result['month'] / 12)
+        
+    if 'month_cos' not in result.columns:
+        result['month_cos'] = np.cos(2 * np.pi * result['month'] / 12)
+        
+    if 'quarter_sin' not in result.columns:
+        result['quarter_sin'] = np.sin(2 * np.pi * result['quarter'] / 4)
+        
+    if 'quarter_cos' not in result.columns:
+        result['quarter_cos'] = np.cos(2 * np.pi * result['quarter'] / 4)
     
     return result
 
@@ -232,6 +248,7 @@ def engineer_features(df: pd.DataFrame,
                      max_lag: int = 6) -> pd.DataFrame:
     """
     Main function to engineer all features for model training.
+    Intelligently handles datasets with existing date features.
     
     Args:
         df: DataFrame with time series data
@@ -260,40 +277,73 @@ def engineer_features(df: pd.DataFrame,
         if date_col in numeric_cols:
             numeric_cols.remove(date_col)
         
+        # Filter out date-related columns that shouldn't be used for feature engineering
+        date_related_cols = ['year', 'month', 'quarter', 'month_end', 'quarter_end', 
+                           'Q1', 'Q2', 'Q3', 'Q4', 'day_of_year', 'day_of_month', 
+                           'week_of_year']
+        
+        numeric_cols = [col for col in numeric_cols if col not in date_related_cols]
+        
         if target_col in numeric_cols:
             numeric_cols.remove(target_col)
     
-    # Add date features
-    result = create_date_features(result, date_col)
+    # Check if we need to add date features
+    has_date_features = all(col in result.columns for col in ['year', 'month', 'quarter'])
+    if not has_date_features:
+        logger.info("Adding date features")
+        result = create_date_features(result, date_col)
+    else:
+        logger.info("Date features already exist, skipping date feature creation")
     
-    # Create Fourier terms for seasonality
-    if create_fourier:
+    # Check if quarterly dummies exist before creating Fourier terms
+    has_quarter_dummies = all(f'Q{i}' in result.columns for i in range(1, 5))
+    
+    # Create Fourier terms for seasonality only if needed
+    if create_fourier and not has_quarter_dummies:
+        logger.info("Adding Fourier terms for seasonality")
         result = create_fourier_terms(result, date_col, periods=[4, 12], harmonics=2)
+    elif create_fourier and has_quarter_dummies:
+        logger.info("Quarter dummies already exist, using more limited Fourier terms")
+        # Just create monthly seasonality terms as quarters are already encoded
+        result = create_fourier_terms(result, date_col, periods=[12], harmonics=2)
     
-    # Create lagged features for target and other numeric columns
+    # Create lagged features for target and key indicators only
     if create_lags:
-        lag_cols = numeric_cols.copy()
-        if target_col not in lag_cols and target_col in result.columns:
-            lag_cols.append(target_col)
+        # Identify key indicators based on column names
+        key_indicators = [col for col in numeric_cols if any(key in col for key in 
+                       ['sales', 'rate', 'price', 'index', 'gdp', 'orders', 'production'])]
         
-        # Create lags from 1 to max_lag
-        result = create_lagged_features(result, lag_cols, list(range(1, max_lag + 1)))
+        # Always include target
+        if target_col not in key_indicators and target_col in result.columns:
+            key_indicators.append(target_col)
+        
+        logger.info(f"Creating lag features for {len(key_indicators)} key indicators")
+        result = create_lagged_features(result, key_indicators, list(range(1, max_lag + 1)))
     
-    # Create rolling window features
+    # Create rolling window features for key indicators only
     if create_rolling:
-        roll_cols = numeric_cols.copy()
-        if target_col not in roll_cols and target_col in result.columns:
-            roll_cols.append(target_col)
+        # Use same key indicators as for lags
+        key_indicators = [col for col in numeric_cols if any(key in col for key in 
+                       ['sales', 'rate', 'price', 'index', 'gdp', 'orders', 'production'])]
         
-        result = create_rolling_features(result, roll_cols, windows=[3, 6, 12], 
-                                       functions=['mean', 'std'])
+        if target_col not in key_indicators and target_col in result.columns:
+            key_indicators.append(target_col)
+        
+        logger.info(f"Creating rolling features for {len(key_indicators)} key indicators")
+        # Limit to fewer windows and just mean (not std) to reduce feature count
+        result = create_rolling_features(result, key_indicators, windows=[3, 6, 12], 
+                                       functions=['mean'])
     
-    # Apply log transformation to numeric features
+    # Apply log transformation selectively
     if log_transform:
-        log_cols = numeric_cols.copy()
-        if target_col not in log_cols and target_col in result.columns:
-            log_cols.append(target_col)
+        # Apply log transform only to variables that typically benefit
+        log_candidate_cols = [col for col in numeric_cols if any(key in col for key in 
+                           ['sales', 'price', 'production', 'consumption', 'orders', 'gdp', 'value'])]
         
-        result = safe_log_transform(result, log_cols)
+        if target_col not in log_candidate_cols and target_col in result.columns:
+            log_candidate_cols.append(target_col)
+        
+        logger.info(f"Applying log transform to {len(log_candidate_cols)} columns")
+        result = safe_log_transform(result, log_candidate_cols)
     
     return result
