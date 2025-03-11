@@ -129,7 +129,7 @@ def load_and_prepare_data(args, logger):
     return df, frequency
 
 def run_pipeline(args):
-    """Run the complete analysis pipeline."""
+    """Run the complete analysis pipeline with centralized missing value handling."""
     # Create timestamp for model folder
     timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
     model_folder_name = f"{args.model_type}_{timestamp}"
@@ -181,6 +181,17 @@ def run_pipeline(args):
     logger.info(f"Saved engineered features to {features_path}")
     logger.info(f"Feature-engineered data shape: {df_features.shape}")
     
+    # Handle NaNs introduced during feature engineering
+    # Use the data_loader to handle these consistently
+    data_loader = DataLoader(date_col=args.date_col)
+    if frequency in ['monthly', 'quarterly']:
+        fill_groups = ['year', 'month' if frequency == 'monthly' else 'quarter']
+        df_features = data_loader.handle_missing_values(df_features, method='mean', fill_groups=fill_groups)
+    else:
+        df_features = data_loader.handle_missing_values(df_features, method='mean')
+    
+    logger.info(f"Data shape after handling NaNs from feature engineering: {df_features.shape}")
+    
     # Reduce dimensions
     logger.info("Reducing dimensions...")
     
@@ -190,10 +201,6 @@ def run_pipeline(args):
         all_features.remove(args.date_col)
     if args.target_col in all_features:
         all_features.remove(args.target_col)
-    
-    # Drop rows with NaN values (from lagging)
-    df_features = df_features.dropna()
-    logger.info(f"Data shape after dropping NaNs: {df_features.shape}")
     
     # Reduce dimensions
     df_reduced, dim_reduction_metadata = reduce_dimensions(
@@ -264,7 +271,9 @@ def run_pipeline(args):
         test_size=args.test_size,
         use_cv=True,
         n_cv_splits=args.cv_splits,
-        plot_results=not args.no_plots
+        plot_results=not args.no_plots,
+        data_loader=data_loader,  # Pass data_loader for consistent NaN handling
+        frequency=frequency       # Pass frequency for group-based fills
     )
     
     # Save plots if enabled
@@ -364,16 +373,3 @@ def run_pipeline(args):
     logger.info("Pipeline completed successfully")
     
     return model_results, df_reduced, model_output_dir
-
-if __name__ == "__main__":
-    try:
-        # Parse arguments
-        args = parse_arguments()
-        
-        # Run pipeline
-        model_results, df_reduced, model_output_dir = run_pipeline(args)
-        
-        print(f"Process completed successfully. Results saved to: {model_output_dir}")
-    except Exception as e:
-        print(f"Error in pipeline: {str(e)}")
-        raise

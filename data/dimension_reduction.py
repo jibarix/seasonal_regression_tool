@@ -4,7 +4,7 @@ Provides functionality for PCA and feature selection methods.
 """
 import pandas as pd
 import numpy as np
-from typing import List, Dict, Union, Optional, Tuple
+from typing import List, Dict, Any, Optional, Tuple
 import logging
 from sklearn.decomposition import PCA
 from sklearn.preprocessing import StandardScaler
@@ -275,7 +275,9 @@ def reduce_dimensions(df: pd.DataFrame,
                      pca_variance_threshold: float = 0.95,
                      feature_selection_method: str = 'mutual_info',
                      top_n_features: int = 10,
-                     lasso_alpha: float = 0.01) -> Tuple[pd.DataFrame, Dict]:
+                     lasso_alpha: float = 0.01,
+                     data_loader: Optional[Any] = None,
+                     frequency: Optional[str] = None) -> Tuple[pd.DataFrame, Dict]:
     """
     Main function to reduce dimensions and select features.
     
@@ -289,6 +291,8 @@ def reduce_dimensions(df: pd.DataFrame,
         feature_selection_method: Method for feature selection
         top_n_features: Number of top features to select
         lasso_alpha: Alpha parameter for Lasso feature selection
+        data_loader: Optional DataLoader instance for missing value handling
+        frequency: Optional frequency of data for group-based imputation
         
     Returns:
         Tuple of (DataFrame with selected features, dictionary with metadata)
@@ -317,6 +321,27 @@ def reduce_dimensions(df: pd.DataFrame,
     # Filter out highly correlated features before PCA
     orig_feature_count = len(feature_cols)
     feature_df = df[feature_cols].copy()
+    
+    # Handle missing values in features consistently
+    if data_loader is not None and frequency is not None:
+        if frequency in ['monthly', 'quarterly']:
+            fill_groups = ['year', 'month' if frequency == 'monthly' else 'quarter']
+            if all(group in df.columns for group in fill_groups):
+                # Create a temporary df with features and grouping columns
+                temp_df = feature_df.copy()
+                for group in fill_groups:
+                    if group not in temp_df.columns and group in df.columns:
+                        temp_df[group] = df[group]
+                feature_df = data_loader.handle_missing_values(temp_df, method='mean', fill_groups=fill_groups)
+                # Remove the grouping columns after imputation
+                feature_df = feature_df[feature_cols]
+            else:
+                feature_df = data_loader.handle_missing_values(feature_df, method='mean')
+        else:
+            feature_df = data_loader.handle_missing_values(feature_df, method='mean')
+    else:
+        # Simple imputation as fallback
+        feature_df = feature_df.fillna(feature_df.mean())
     
     # Simple correlation filtering
     corr_matrix = feature_df.corr().abs()
@@ -348,9 +373,9 @@ def reduce_dimensions(df: pd.DataFrame,
             df, feature_cols, variance_threshold=1.0  # Get all components first
         )
         
-        if pca_obj is not None:  # Changed from pre_pca to pca_obj
+        if pca_obj is not None:
             # Get components that explain up to threshold variance
-            explained_variance = np.cumsum(pca_obj.explained_variance_ratio_)  # Use pca_obj, not pc_df
+            explained_variance = np.cumsum(pca_obj.explained_variance_ratio_)
             n_components = np.argmax(explained_variance >= pca_variance_threshold) + 1
             
             logger.info(f"Using {n_components} PCA components to explain {pca_variance_threshold*100:.1f}% of variance")
@@ -373,6 +398,7 @@ def reduce_dimensions(df: pd.DataFrame,
                 metadata['pca_explained_variance'] = pca.explained_variance_ratio_.tolist()
                 metadata['pca_loading_analysis'] = pca_analysis
                 metadata['n_components_used'] = n_components
+                metadata['pca'] = pca
                 
                 # Use PCA components for feature selection
                 feature_cols = pc_df.columns.tolist()

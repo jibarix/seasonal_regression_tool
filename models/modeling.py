@@ -341,7 +341,9 @@ def train_and_evaluate(df: pd.DataFrame,
                       test_size: float = 0.2,
                       use_cv: bool = True,
                       n_cv_splits: int = 5,
-                      plot_results: bool = True) -> Dict:
+                      plot_results: bool = True,
+                      data_loader: Optional[Any] = None,
+                      frequency: Optional[str] = None) -> Dict:
     """
     Train and evaluate a model on the given data.
     
@@ -356,6 +358,8 @@ def train_and_evaluate(df: pd.DataFrame,
         use_cv: Whether to use time series cross-validation
         n_cv_splits: Number of splits for cross-validation
         plot_results: Whether to plot results
+        data_loader: Optional DataLoader instance for missing value handling
+        frequency: Optional frequency of data for group-based imputation
         
     Returns:
         Dictionary with trained model and evaluation results
@@ -388,9 +392,32 @@ def train_and_evaluate(df: pd.DataFrame,
         date_index = pd.to_datetime(df[date_col])
         result['date_col'] = date_col
     
-    # Handle missing values
-    X = X.fillna(X.mean())
-    y = y.fillna(y.mean())
+    # Handle missing values consistently using data_loader if provided
+    if data_loader is not None and frequency is not None:
+        # Create a temporary df with features and target
+        temp_df = pd.concat([X, y], axis=1)
+        
+        # Use the data_loader's missing value handling
+        if frequency in ['monthly', 'quarterly']:
+            fill_groups = ['year', 'month' if frequency == 'monthly' else 'quarter']
+            if all(group in df.columns for group in fill_groups):
+                # Add the grouping columns if they exist in the original df
+                for group in fill_groups:
+                    if group not in temp_df.columns and group in df.columns:
+                        temp_df[group] = df[group]
+                temp_df = data_loader.handle_missing_values(temp_df, method='mean', fill_groups=fill_groups)
+            else:
+                temp_df = data_loader.handle_missing_values(temp_df, method='mean')
+        else:
+            temp_df = data_loader.handle_missing_values(temp_df, method='mean')
+        
+        # Extract back the features and target
+        X = temp_df[valid_cols]
+        y = temp_df[target_col]
+    else:
+        # Fallback to simple imputation if data_loader not provided
+        X = X.fillna(X.mean())
+        y = y.fillna(y.mean())
     
     # Split data into train and test sets
     test_size_records = int(len(df) * test_size)
