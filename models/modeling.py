@@ -475,3 +475,30 @@ def train_and_evaluate(df: pd.DataFrame,
             plt.show()
     
     return result
+
+def setup_logging(log_file):
+    """Setup logging to file and console."""
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Create file handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(console_formatter)
+    
+    # Add handlers
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger

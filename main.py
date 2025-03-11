@@ -8,9 +8,9 @@ import pandas as pd
 import numpy as np
 import argparse
 import logging
-import matplotlib.pyplot as plt
 from datetime import datetime
 from typing import List, Dict, Union, Optional, Tuple
+import matplotlib.pyplot as plt
 
 # Import project modules
 from data.processor import DataLoader
@@ -19,16 +19,32 @@ from data.feature_engineering import engineer_features
 from data.dimension_reduction import reduce_dimensions, plot_pca_variance
 from models.modeling import train_and_evaluate, analyze_residuals, plot_residuals, plot_actual_vs_predicted
 
-# Setup logging
-logging.basicConfig(
-    level=logging.INFO,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
-    handlers=[
-        logging.FileHandler('ts_forecast.log'),
-        logging.StreamHandler()
-    ]
-)
-logger = logging.getLogger(__name__)
+def setup_logging(log_file):
+    """Setup logging to file and console."""
+    logger = logging.getLogger()
+    logger.setLevel(logging.INFO)
+    
+    # Remove existing handlers
+    for handler in logger.handlers[:]:
+        logger.removeHandler(handler)
+    
+    # Create file handler
+    file_handler = logging.FileHandler(log_file)
+    file_handler.setLevel(logging.INFO)
+    file_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    file_handler.setFormatter(file_formatter)
+    
+    # Create console handler
+    console_handler = logging.StreamHandler()
+    console_handler.setLevel(logging.INFO)
+    console_formatter = logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s')
+    console_handler.setFormatter(console_formatter)
+    
+    # Add handlers
+    logger.addHandler(file_handler)
+    logger.addHandler(console_handler)
+    
+    return logger
 
 def parse_arguments():
     """Parse command line arguments."""
@@ -80,7 +96,7 @@ def parse_arguments():
                         
     return parser.parse_args()
 
-def load_and_prepare_data(args):
+def load_and_prepare_data(args, logger):
     """Load and prepare data for modeling."""
     logger.info(f"Loading data from {args.data_file}")
     
@@ -114,18 +130,30 @@ def load_and_prepare_data(args):
 
 def run_pipeline(args):
     """Run the complete analysis pipeline."""
-    # Create output directory if it doesn't exist
-    os.makedirs(args.output_dir, exist_ok=True)
+    # Create timestamp for model folder
+    timestamp = datetime.now().strftime('%Y%m%d_%H%M%S')
+    model_folder_name = f"{args.model_type}_{timestamp}"
+    
+    # Create model-specific output directory
+    model_output_dir = os.path.join(args.output_dir, model_folder_name)
+    os.makedirs(model_output_dir, exist_ok=True)
+    
+    # Setup logging for this run
+    log_file = os.path.join(model_output_dir, f"{model_folder_name}.log")
+    logger = setup_logging(log_file)
+    
+    logger.info(f"Starting pipeline run with model: {args.model_type}")
+    logger.info(f"Results will be saved to: {model_output_dir}")
     
     # Load and prepare data
-    df, frequency = load_and_prepare_data(args)
+    df, frequency = load_and_prepare_data(args, logger)
     
     # Log basic data info
     logger.info(f"Data shape: {df.shape}")
     logger.info(f"Target column: {args.target_col}")
     
     # Save prepared data
-    prepared_data_path = os.path.join(args.output_dir, 'prepared_data.csv')
+    prepared_data_path = os.path.join(model_output_dir, 'prepared_data.csv')
     df.to_csv(prepared_data_path, index=False)
     logger.info(f"Saved prepared data to {prepared_data_path}")
     
@@ -148,7 +176,7 @@ def run_pipeline(args):
     )
     
     # Save feature-engineered data
-    features_path = os.path.join(args.output_dir, 'engineered_features.csv')
+    features_path = os.path.join(model_output_dir, 'engineered_features.csv')
     df_features.to_csv(features_path, index=False)
     logger.info(f"Saved engineered features to {features_path}")
     logger.info(f"Feature-engineered data shape: {df_features.shape}")
@@ -180,15 +208,19 @@ def run_pipeline(args):
     )
     
     # Save reduced data
-    reduced_path = os.path.join(args.output_dir, 'reduced_data.csv')
+    reduced_path = os.path.join(model_output_dir, 'reduced_data.csv')
     df_reduced.to_csv(reduced_path, index=False)
     logger.info(f"Saved reduced data to {reduced_path}")
     logger.info(f"Reduced data shape: {df_reduced.shape}")
     
     # Plot PCA variance if PCA was used
     if args.use_pca and 'pca_applied' in dim_reduction_metadata and dim_reduction_metadata['pca_applied']:
-        if not args.no_plots and 'pca' in locals():
-            plot_pca_variance(dim_reduction_metadata.get('pca'))
+        if not args.no_plots and 'pca' in dim_reduction_metadata:
+            fig = plot_pca_variance(dim_reduction_metadata.get('pca'))
+            if fig:
+                pca_plot_path = os.path.join(model_output_dir, 'pca_variance.png')
+                fig.savefig(pca_plot_path, dpi=300, bbox_inches='tight')
+                plt.close(fig)
     
     # Train and evaluate model
     logger.info(f"Training {args.model_type} model...")
@@ -235,6 +267,52 @@ def run_pipeline(args):
         plot_results=not args.no_plots
     )
     
+    # Save plots if enabled
+    if not args.no_plots:
+        # Save actual vs predicted plot
+        if 'y_test' in model_results and 'y_test_pred' in model_results:
+            plt.figure(figsize=(12, 6))
+            plt.plot(model_results['y_test'].values, 'b-', label='Actual')
+            plt.plot(model_results['y_test_pred'], 'r-', label='Predicted')
+            plt.legend()
+            plt.title(f"{args.model_type} Model: Actual vs Predicted")
+            plt.tight_layout()
+            pred_plot_path = os.path.join(model_output_dir, 'actual_vs_predicted.png')
+            plt.savefig(pred_plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+        # Save residual plots
+        if 'residual_analysis' in model_results:
+            residuals = model_results['residual_analysis']['residuals']
+            plt.figure(figsize=(12, 6))
+            plt.plot(residuals, 'g-')
+            plt.axhline(y=0, color='r', linestyle='-')
+            plt.title(f"{args.model_type} Model: Residuals")
+            plt.tight_layout()
+            resid_plot_path = os.path.join(model_output_dir, 'residuals.png')
+            plt.savefig(resid_plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+            
+        # Save feature importance plot if available
+        if 'feature_importance' in model_results:
+            fi = model_results['feature_importance']
+            plt.figure(figsize=(12, 8))
+            fi.sort_values().plot(kind='barh')
+            plt.title(f"{args.model_type} Model: Feature Importance")
+            plt.tight_layout()
+            fi_plot_path = os.path.join(model_output_dir, 'feature_importance.png')
+            plt.savefig(fi_plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+        elif 'coefficients' in model_results:
+            coef = model_results['coefficients']
+            plt.figure(figsize=(12, 8))
+            coef.sort_values(key=abs).plot(kind='barh')
+            plt.title(f"{args.model_type} Model: Coefficients")
+            plt.tight_layout()
+            coef_plot_path = os.path.join(model_output_dir, 'coefficients.png')
+            plt.savefig(coef_plot_path, dpi=300, bbox_inches='tight')
+            plt.close()
+    
     # Log evaluation results
     if 'test_evaluation' in model_results:
         eval_results = model_results['test_evaluation']
@@ -272,7 +350,7 @@ def run_pipeline(args):
     }
     
     # Save summary to file
-    summary_path = os.path.join(args.output_dir, 'model_summary.txt')
+    summary_path = os.path.join(model_output_dir, 'model_summary.txt')
     with open(summary_path, 'w') as f:
         for key, value in summary.items():
             if key == 'selected_features':
@@ -285,7 +363,7 @@ def run_pipeline(args):
     logger.info(f"Saved model summary to {summary_path}")
     logger.info("Pipeline completed successfully")
     
-    return model_results, df_reduced
+    return model_results, df_reduced, model_output_dir
 
 if __name__ == "__main__":
     try:
@@ -293,9 +371,9 @@ if __name__ == "__main__":
         args = parse_arguments()
         
         # Run pipeline
-        model_results, df_reduced = run_pipeline(args)
+        model_results, df_reduced, model_output_dir = run_pipeline(args)
         
-        logger.info("Process completed successfully")
+        print(f"Process completed successfully. Results saved to: {model_output_dir}")
     except Exception as e:
-        logger.exception(f"Error in pipeline: {str(e)}")
+        print(f"Error in pipeline: {str(e)}")
         raise
