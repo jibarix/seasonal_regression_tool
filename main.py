@@ -65,7 +65,7 @@ def parse_arguments():
                         help='Comma-separated list of Fourier periods')
     parser.add_argument('--fourier-harmonics', type=int, default=2,
                         help='Number of Fourier harmonics')
-    parser.add_argument('--max-lag', type=int, default=3,  # Reduced from 6 to 3
+    parser.add_argument('--max-lag', type=int, default=3,
                         help='Maximum lag for lagged features')
     parser.add_argument('--use-log', action='store_true',
                         help='Apply log transformation to features')
@@ -80,11 +80,11 @@ def parse_arguments():
     parser.add_argument('--feature-selection', type=str, default='mutual_info',
                         choices=['mutual_info', 'f_regression', 'lasso'],
                         help='Feature selection method')
-    parser.add_argument('--top-n-features', type=int, default=20,  # Increased from 10 to 20
+    parser.add_argument('--top-n-features', type=int, default=20,
                         help='Number of top features to select')
                         
     # Modeling arguments
-    parser.add_argument('--model-type', type=str, default='randomforest',  # Changed default from linear to randomforest
+    parser.add_argument('--model-type', type=str, default='randomforest',
                         choices=['linear', 'ridge', 'lasso', 'elasticnet', 'randomforest', 'gbm'],
                         help='Type of model to train')
     parser.add_argument('--test-size', type=float, default=0.2,
@@ -223,11 +223,24 @@ def run_pipeline(args):
     # Plot PCA variance if PCA was used
     if args.use_pca and 'pca_applied' in dim_reduction_metadata and dim_reduction_metadata['pca_applied']:
         if not args.no_plots and 'pca' in dim_reduction_metadata:
-            fig = plot_pca_variance(dim_reduction_metadata.get('pca'))
-            if fig:
-                pca_plot_path = os.path.join(model_output_dir, 'pca_variance.png')
-                fig.savefig(pca_plot_path, dpi=300, bbox_inches='tight')
-                plt.close(fig)
+            pca_variance_fig = plt.figure(figsize=(10, 6))
+            n_components = min(20, len(dim_reduction_metadata['pca'].explained_variance_ratio_))
+            cumulative_variance = np.cumsum(dim_reduction_metadata['pca'].explained_variance_ratio_[:n_components])
+            plt.bar(range(1, n_components + 1), dim_reduction_metadata['pca'].explained_variance_ratio_[:n_components], 
+                    alpha=0.6, label='Individual explained variance')
+            plt.step(range(1, n_components + 1), cumulative_variance, where='mid', 
+                     label='Cumulative explained variance', color='red')
+            plt.axhline(y=0.95, linestyle='--', color='green', label='95% Variance threshold')
+            plt.xlabel('Principal Components')
+            plt.ylabel('Explained Variance Ratio')
+            plt.title('PCA Explained Variance')
+            plt.xticks(range(1, n_components + 1))
+            plt.legend()
+            plt.grid(True, alpha=0.3)
+            plt.tight_layout()
+            pca_plot_path = os.path.join(model_output_dir, 'pca_variance.png')
+            pca_variance_fig.savefig(pca_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(pca_variance_fig)
     
     # Train and evaluate model
     logger.info(f"Training {args.model_type} model...")
@@ -280,47 +293,47 @@ def run_pipeline(args):
     if not args.no_plots:
         # Save actual vs predicted plot
         if 'y_test' in model_results and 'y_test_pred' in model_results:
-            plt.figure(figsize=(12, 6))
+            pred_plot_fig = plt.figure(figsize=(12, 6))
             plt.plot(model_results['y_test'].values, 'b-', label='Actual')
             plt.plot(model_results['y_test_pred'], 'r-', label='Predicted')
             plt.legend()
             plt.title(f"{args.model_type} Model: Actual vs Predicted")
             plt.tight_layout()
             pred_plot_path = os.path.join(model_output_dir, 'actual_vs_predicted.png')
-            plt.savefig(pred_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
+            pred_plot_fig.savefig(pred_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(pred_plot_fig)
             
         # Save residual plots
         if 'residual_analysis' in model_results:
             residuals = model_results['residual_analysis']['residuals']
-            plt.figure(figsize=(12, 6))
+            resid_plot_fig = plt.figure(figsize=(12, 6))
             plt.plot(residuals, 'g-')
             plt.axhline(y=0, color='r', linestyle='-')
             plt.title(f"{args.model_type} Model: Residuals")
             plt.tight_layout()
             resid_plot_path = os.path.join(model_output_dir, 'residuals.png')
-            plt.savefig(resid_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
+            resid_plot_fig.savefig(resid_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(resid_plot_fig)
             
         # Save feature importance plot if available
         if 'feature_importance' in model_results:
             fi = model_results['feature_importance']
-            plt.figure(figsize=(12, 8))
+            fi_fig = plt.figure(figsize=(12, 8))
             fi.sort_values().plot(kind='barh')
             plt.title(f"{args.model_type} Model: Feature Importance")
             plt.tight_layout()
             fi_plot_path = os.path.join(model_output_dir, 'feature_importance.png')
-            plt.savefig(fi_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
+            fi_fig.savefig(fi_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(fi_fig)
         elif 'coefficients' in model_results:
             coef = model_results['coefficients']
-            plt.figure(figsize=(12, 8))
+            coef_fig = plt.figure(figsize=(12, 8))
             coef.sort_values(key=abs).plot(kind='barh')
             plt.title(f"{args.model_type} Model: Coefficients")
             plt.tight_layout()
             coef_plot_path = os.path.join(model_output_dir, 'coefficients.png')
-            plt.savefig(coef_plot_path, dpi=300, bbox_inches='tight')
-            plt.close()
+            coef_fig.savefig(coef_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(coef_fig)
     
     # Log evaluation results
     if 'test_evaluation' in model_results:
@@ -373,3 +386,20 @@ def run_pipeline(args):
     logger.info("Pipeline completed successfully")
     
     return model_results, df_reduced, model_output_dir
+
+# Add this block to execute the pipeline when the script is run
+if __name__ == "__main__":
+    # Parse command-line arguments
+    args = parse_arguments()
+    
+    # Make sure the output directory exists
+    os.makedirs(args.output_dir, exist_ok=True)
+    
+    # Run the pipeline
+    try:
+        model_results, df_reduced, model_output_dir = run_pipeline(args)
+        print(f"Pipeline completed successfully. Results saved to {model_output_dir}")
+    except Exception as e:
+        print(f"Error running pipeline: {e}")
+        import traceback
+        traceback.print_exc()
