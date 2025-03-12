@@ -529,3 +529,216 @@ def setup_logging(log_file):
     logger.addHandler(console_handler)
     
     return logger
+
+def train_prophet_model(df, target_col, date_col, params=None, test_size=0.2):
+    """
+    Train and evaluate a Prophet model for time series forecasting.
+    
+    Args:
+        df: DataFrame with features and target
+        target_col: Name of target column
+        date_col: Name of date column
+        params: Optional parameters for Prophet model
+        test_size: Proportion of data to use for testing
+        
+    Returns:
+        Dictionary with evaluation results and forecasts
+    """
+    from prophet import Prophet
+    import pandas as pd
+    import numpy as np
+    from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    
+    # Create a copy to avoid modifying the original
+    data = df.copy()
+    
+    if not params:
+        params = {}
+    
+    # Prepare data for Prophet (requires 'ds' for dates and 'y' for target)
+    prophet_data = pd.DataFrame()
+    prophet_data['ds'] = pd.to_datetime(data[date_col])
+    prophet_data['y'] = data[target_col].values
+    
+    # Split into train and test sets
+    train_size = int(len(prophet_data) * (1 - test_size))
+    train_data = prophet_data.iloc[:train_size]
+    test_data = prophet_data.iloc[train_size:]
+    
+    # Get parameters for Prophet
+    yearly_seasonality = params.get('yearly_seasonality', True)
+    weekly_seasonality = params.get('weekly_seasonality', False)  # Often False for monthly data
+    daily_seasonality = params.get('daily_seasonality', False)    # Often False for monthly data
+    seasonal_periods = params.get('seasonal_periods', None)
+    changepoint_prior_scale = params.get('changepoint_prior_scale', 0.05)
+    seasonality_prior_scale = params.get('seasonality_prior_scale', 10.0)
+    holidays_prior_scale = params.get('holidays_prior_scale', 10.0)
+    changepoint_range = params.get('changepoint_range', 0.8)
+    mcmc_samples = params.get('mcmc_samples', 0)  # Default to normal approximation
+    interval_width = params.get('interval_width', 0.80)
+    uncertainty_samples = params.get('uncertainty_samples', 1000)
+    
+    # Initialize Prophet model
+    model = Prophet(
+        yearly_seasonality=yearly_seasonality,
+        weekly_seasonality=weekly_seasonality,
+        daily_seasonality=daily_seasonality,
+        changepoint_prior_scale=changepoint_prior_scale,
+        seasonality_prior_scale=seasonality_prior_scale,
+        holidays_prior_scale=holidays_prior_scale,
+        changepoint_range=changepoint_range,
+        mcmc_samples=mcmc_samples,
+        interval_width=interval_width,
+        uncertainty_samples=uncertainty_samples
+    )
+    
+    # Add custom seasonality if specified
+    if seasonal_periods:
+        for period in seasonal_periods:
+            if isinstance(period, dict):
+                # If period is a dictionary with details
+                name = period.get('name', f"custom_season_{period.get('period')}")
+                period_days = period.get('period')
+                fourier_order = period.get('fourier_order', 5)
+                model.add_seasonality(
+                    name=name,
+                    period=period_days,
+                    fourier_order=fourier_order
+                )
+            elif isinstance(period, (int, float)):
+                # If period is just a number of days
+                model.add_seasonality(
+                    name=f"custom_season_{period}",
+                    period=period,
+                    fourier_order=5
+                )
+    
+    # Add country holidays if specified
+    country_holidays = params.get('country_holidays', None)
+    if country_holidays:
+        model.add_country_holidays(country_name=country_holidays)
+    
+    # Add extra regressors if specified in params
+    regressors = params.get('regressors', [])
+    for regressor in regressors:
+        if regressor in data.columns:
+            prophet_data[regressor] = data[regressor].values
+            model.add_regressor(regressor)
+    
+    # Fit the model
+    model.fit(train_data)
+    
+    # Create a dataframe for the test period to make predictions
+    future = model.make_future_dataframe(
+        periods=len(test_data),
+        freq=params.get('freq', 'M')  # default to monthly
+    )
+    
+    # Add regressor values to future dataframe if using regressors
+    for regressor in regressors:
+        if regressor in data.columns:
+            future[regressor] = pd.concat([data[regressor].reset_index(drop=True), 
+                                          pd.Series([np.nan] * (len(future) - len(data)))])
+    
+    # Make predictions
+    forecast = model.predict(future)
+    
+    # Extract predicted values for test set
+    y_pred = forecast['yhat'].iloc[train_size:].values
+    y_true = test_data['y'].values
+    
+    # Calculate metrics
+    mse = mean_squared_error(y_true, y_pred)
+    rmse = np.sqrt(mse)
+    mae = mean_absolute_error(y_true, y_pred)
+    
+    # Calculate MAPE, handling zero values
+    mask = y_true != 0
+    mape = np.mean(np.abs((y_true[mask] - y_pred[mask]) / y_true[mask])) * 100 if any(mask) else np.nan
+    
+    # Calculate R²
+    r2 = r2_score(y_true, y_pred)
+    
+    # Prepare results
+    result = {
+        'model': model,
+        'forecast': forecast,
+        'train_data': train_data,
+        'test_data': test_data,
+        'test_evaluation': {
+            'mse': mse,
+            'rmse': rmse,
+            'mae': mae,
+            'mape': mape,
+            'r2': r2,
+            'predictions': y_pred
+        },
+        'y_test': pd.Series(y_true, index=test_data.index),
+        'y_test_pred': pd.Series(y_pred, index=test_data.index)
+    }
+    
+    return result
+
+def plot_prophet_forecast(prophet_result, title="Prophet Forecast"):
+    """
+    Plot the forecast from a Prophet model.
+    
+    Args:
+        prophet_result: Result dictionary from train_prophet_model
+        title: Plot title
+    """
+    from prophet.plot import plot_plotly, plot_components_plotly
+    import matplotlib.pyplot as plt
+    
+    model = prophet_result['model']
+    forecast = prophet_result['forecast']
+    train_data = prophet_result['train_data']
+    test_data = prophet_result['test_data']
+    
+    # Create the figure
+    plt.figure(figsize=(12, 6))
+    
+    # Plot the forecast
+    plt.plot(forecast['ds'], forecast['yhat'], 'b-', label='Forecast')
+    plt.fill_between(forecast['ds'], 
+                    forecast['yhat_lower'], 
+                    forecast['yhat_upper'], 
+                    color='blue', alpha=0.2, label='Uncertainty Interval')
+    
+    # Plot the actual values
+    plt.plot(train_data['ds'], train_data['y'], 'k.', label='Training Data')
+    plt.plot(test_data['ds'], test_data['y'], 'r.', label='Test Data')
+    
+    # Add labels and title
+    plt.xlabel('Date')
+    plt.ylabel('Value')
+    plt.title(title)
+    plt.legend()
+    
+    plt.tight_layout()
+    plt.show()
+    
+    return
+
+def plot_prophet_components(prophet_result, title="Prophet Components"):
+    """
+    Plot the components from a Prophet model.
+    
+    Args:
+        prophet_result: Result dictionary from train_prophet_model
+        title: Plot title
+    """
+    from prophet.plot import plot_components
+    import matplotlib.pyplot as plt
+    
+    model = prophet_result['model']
+    forecast = prophet_result['forecast']
+    
+    plt.figure(figsize=(12, 10))
+    plot_components(model, forecast)
+    plt.suptitle(title, fontsize=16)
+    plt.tight_layout()
+    plt.subplots_adjust(top=0.95)
+    plt.show()
+    
+    return

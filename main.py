@@ -85,7 +85,7 @@ def parse_arguments():
                         
     # Modeling arguments
     parser.add_argument('--model-type', type=str, default='randomforest',
-                        choices=['linear', 'ridge', 'lasso', 'elasticnet', 'randomforest', 'gbm'],
+                        choices=['linear', 'ridge', 'lasso', 'elasticnet', 'randomforest', 'gbm', 'prophet'],
                         help='Type of model to train')
     parser.add_argument('--test-size', type=float, default=0.2,
                         help='Proportion of data to use for testing')
@@ -93,6 +93,20 @@ def parse_arguments():
                         help='Number of splits for time series cross-validation')
     parser.add_argument('--no-plots', action='store_true',
                         help='Disable plotting of results')
+    
+    # Prophet-specific arguments
+    parser.add_argument('--prophet-yearly', action='store_true',
+                        help='Enable yearly seasonality in Prophet model')
+    parser.add_argument('--prophet-weekly', action='store_true',
+                        help='Enable weekly seasonality in Prophet model')
+    parser.add_argument('--prophet-daily', action='store_true',
+                        help='Enable daily seasonality in Prophet model')
+    parser.add_argument('--prophet-seasonality-prior-scale', type=float, default=10.0,
+                        help='Seasonality prior scale for Prophet')
+    parser.add_argument('--prophet-changepoint-prior-scale', type=float, default=0.05,
+                        help='Changepoint prior scale for Prophet')
+    parser.add_argument('--prophet-regressors', type=str, default='',
+                        help='Comma-separated list of additional regressor columns for Prophet')
                         
     return parser.parse_args()
 
@@ -275,22 +289,124 @@ def run_pipeline(args):
         model_params = {'n_estimators': 100, 'max_depth': 10}
     elif args.model_type == 'gbm':
         model_params = {'n_estimators': 100, 'learning_rate': 0.1, 'max_depth': 3}
+    elif args.model_type == 'prophet':
+        # Setup Prophet-specific parameters
+        model_params = {
+            'yearly_seasonality': args.prophet_yearly,
+            'weekly_seasonality': args.prophet_weekly,
+            'daily_seasonality': args.prophet_daily,
+            'seasonality_prior_scale': args.prophet_seasonality_prior_scale,
+            'changepoint_prior_scale': args.prophet_changepoint_prior_scale,
+            'freq': 'M'  # Default to monthly frequency
+        }
+        
+        # Add any specified regressors
+        if args.prophet_regressors:
+            model_params['regressors'] = args.prophet_regressors.split(',')
+        
+        # Detect frequency if possible
+        if frequency == 'monthly':
+            model_params['freq'] = 'M'
+        elif frequency == 'quarterly':
+            model_params['freq'] = 'Q'
+        elif frequency == 'annual':
+            model_params['freq'] = 'Y'
+        
+        # For monthly data, set up appropriate seasonal periods
+        if frequency == 'monthly':
+            # Set up yearly seasonality as 12 months
+            model_params['seasonal_periods'] = [{'name': 'yearly', 'period': 365.25, 'fourier_order': 5}]
+            if not args.prophet_yearly:
+                # If yearly_seasonality is False, use custom seasonality
+                model_params['yearly_seasonality'] = False
     
     # Train and evaluate model
-    model_results = train_and_evaluate(
-        df_reduced,
-        target_col=args.target_col,
-        feature_cols=selected_features,
-        date_col=args.date_col,
-        model_type=args.model_type,
-        params=model_params,
-        test_size=args.test_size,
-        use_cv=True,
-        n_cv_splits=args.cv_splits,
-        plot_results=not args.no_plots,
-        data_loader=data_loader,  # Pass data_loader for consistent NaN handling
-        frequency=frequency       # Pass frequency for group-based fills
-    )
+    if args.model_type == 'prophet':
+        # For Prophet, use the dedicated function
+        from models.modeling import train_prophet_model, plot_prophet_forecast, plot_prophet_components
+        
+        logger.info(f"Training Prophet model...")
+        
+        # Extract the requested regressors from command line args
+        regressors = []
+        if args.prophet_regressors:
+            # Split by comma and strip any whitespace
+            regressor_names = [name.strip() for name in args.prophet_regressors.split(',')]
+            
+            # Filter to only include those actually in the dataframe
+            regressors = [reg for reg in regressor_names if reg in df_reduced.columns]
+            logger.info(f"Using regressors for Prophet: {regressors}")
+            
+            if len(regressors) < len(regressor_names):
+                missing = set(regressor_names) - set(regressors)
+                logger.warning(f"Could not find requested regressors: {missing}")
+                
+            # Add regressors to Prophet parameters
+            model_params['regressors'] = regressors
+        
+        # To avoid issues, we need to create a simplified dataframe with just date, target, and regressors
+        prophet_df = pd.DataFrame()
+        prophet_df[args.date_col] = df_reduced[args.date_col]
+        prophet_df[args.target_col] = df_reduced[args.target_col]
+        
+        # Add regressor columns
+        for regressor in regressors:
+            if regressor in df_reduced.columns:
+                prophet_df[regressor] = df_reduced[regressor]
+        
+        model_results = train_prophet_model(
+            prophet_df,  # Use the simplified dataframe
+            target_col=args.target_col,
+            date_col=args.date_col,
+            params=model_params,
+            test_size=args.test_size
+        )
+        
+        # Save plots if enabled
+        if not args.no_plots:
+            # Plot Prophet forecast
+            forecast_fig = plt.figure(figsize=(12, 6))
+            plt.plot(model_results['forecast']['ds'][-len(model_results['y_test']):], 
+                    model_results['y_test'].values, 'b-', label='Actual')
+            plt.plot(model_results['forecast']['ds'][-len(model_results['y_test']):], 
+                    model_results['y_test_pred'].values, 'r-', label='Forecast')
+            plt.fill_between(
+                model_results['forecast']['ds'][-len(model_results['y_test']):],
+                model_results['forecast']['yhat_lower'][-len(model_results['y_test']):],
+                model_results['forecast']['yhat_upper'][-len(model_results['y_test']):],
+                color='gray', alpha=0.2, label='Uncertainty Interval'
+            )
+            plt.legend()
+            plt.title(f"Prophet Model: Actual vs Forecast")
+            plt.tight_layout()
+            forecast_plot_path = os.path.join(model_output_dir, 'prophet_forecast.png')
+            forecast_fig.savefig(forecast_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(forecast_fig)
+            
+            # Save components plots
+            components_fig = plt.figure(figsize=(12, 10))
+            from prophet.plot import plot_components
+            plot_components(model_results['model'], model_results['forecast'], figsize=(12, 10))
+            plt.tight_layout()
+            components_plot_path = os.path.join(model_output_dir, 'prophet_components.png')
+            components_fig.savefig(components_plot_path, dpi=300, bbox_inches='tight')
+            plt.close(components_fig)
+    else:
+        # For other models, use the existing function
+        model_results = train_and_evaluate(
+            df_reduced,
+            target_col=args.target_col,
+            feature_cols=selected_features,
+            date_col=args.date_col,
+            model_type=args.model_type,
+            params=model_params,
+            test_size=args.test_size,
+            use_cv=True,
+            n_cv_splits=args.cv_splits,
+            plot_results=not args.no_plots,
+            data_loader=data_loader,
+            frequency=frequency
+        )
     
     # Save plots if enabled
     if not args.no_plots:
