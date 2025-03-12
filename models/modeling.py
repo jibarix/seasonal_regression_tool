@@ -530,6 +530,7 @@ def setup_logging(log_file):
     
     return logger
 
+
 def train_prophet_model(df, target_col, date_col, params=None, test_size=0.2):
     """
     Train and evaluate a Prophet model for time series forecasting.
@@ -547,7 +548,19 @@ def train_prophet_model(df, target_col, date_col, params=None, test_size=0.2):
     from prophet import Prophet
     import pandas as pd
     import numpy as np
+    import logging
     from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+    
+    logger = logging.getLogger(__name__)
+    
+    # Check if the required columns exist
+    if date_col not in df.columns:
+        logger.error(f"Date column '{date_col}' not found in dataframe")
+        raise ValueError(f"Date column '{date_col}' not found in dataframe")
+    
+    if target_col not in df.columns:
+        logger.error(f"Target column '{target_col}' not found in dataframe")
+        raise ValueError(f"Target column '{target_col}' not found in dataframe")
     
     # Create a copy to avoid modifying the original
     data = df.copy()
@@ -555,62 +568,41 @@ def train_prophet_model(df, target_col, date_col, params=None, test_size=0.2):
     if not params:
         params = {}
     
+    # Ensure date column is datetime
+    data[date_col] = pd.to_datetime(data[date_col])
+    
+    # Check for missing values in target
+    if data[target_col].isna().any():
+        logger.warning(f"Target column '{target_col}' has {data[target_col].isna().sum()} missing values")
+        # Fill missing values with forward fill, then backward fill
+        data[target_col] = data[target_col].ffill().bfill()
+    
+    # Log all columns in the dataframe
+    logger.info(f"Columns in input dataframe: {data.columns.tolist()}")
+    
     # Prepare data for Prophet (requires 'ds' for dates and 'y' for target)
     prophet_data = pd.DataFrame()
-    prophet_data['ds'] = pd.to_datetime(data[date_col])
-    prophet_data['y'] = data[target_col].values
-    
-    # Split into train and test sets
-    train_size = int(len(prophet_data) * (1 - test_size))
-    train_data = prophet_data.iloc[:train_size]
-    test_data = prophet_data.iloc[train_size:]
-    
-    # Get parameters for Prophet
-    yearly_seasonality = params.get('yearly_seasonality', True)
-    weekly_seasonality = params.get('weekly_seasonality', False)  # Often False for monthly data
-    daily_seasonality = params.get('daily_seasonality', False)    # Often False for monthly data
-    seasonal_periods = params.get('seasonal_periods', None)
-    changepoint_prior_scale = params.get('changepoint_prior_scale', 0.05)
-    seasonality_prior_scale = params.get('seasonality_prior_scale', 10.0)
-    holidays_prior_scale = params.get('holidays_prior_scale', 10.0)
-    changepoint_range = params.get('changepoint_range', 0.8)
-    mcmc_samples = params.get('mcmc_samples', 0)  # Default to normal approximation
-    interval_width = params.get('interval_width', 0.80)
-    uncertainty_samples = params.get('uncertainty_samples', 1000)
+    prophet_data['ds'] = data[date_col]
+    prophet_data['y'] = data[target_col]
     
     # Initialize Prophet model
     model = Prophet(
-        yearly_seasonality=yearly_seasonality,
-        weekly_seasonality=weekly_seasonality,
-        daily_seasonality=daily_seasonality,
-        changepoint_prior_scale=changepoint_prior_scale,
-        seasonality_prior_scale=seasonality_prior_scale,
-        holidays_prior_scale=holidays_prior_scale,
-        changepoint_range=changepoint_range,
-        mcmc_samples=mcmc_samples,
-        interval_width=interval_width,
-        uncertainty_samples=uncertainty_samples
+        yearly_seasonality=params.get('yearly_seasonality', True),
+        weekly_seasonality=params.get('weekly_seasonality', False),
+        daily_seasonality=params.get('daily_seasonality', False),
+        changepoint_prior_scale=params.get('changepoint_prior_scale', 0.05),
+        seasonality_prior_scale=params.get('seasonality_prior_scale', 10.0)
     )
     
-    # Add custom seasonality if specified
+    # Add seasonal periods if specified
+    seasonal_periods = params.get('seasonal_periods', None)
     if seasonal_periods:
         for period in seasonal_periods:
             if isinstance(period, dict):
-                # If period is a dictionary with details
-                name = period.get('name', f"custom_season_{period.get('period')}")
-                period_days = period.get('period')
-                fourier_order = period.get('fourier_order', 5)
                 model.add_seasonality(
-                    name=name,
-                    period=period_days,
-                    fourier_order=fourier_order
-                )
-            elif isinstance(period, (int, float)):
-                # If period is just a number of days
-                model.add_seasonality(
-                    name=f"custom_season_{period}",
-                    period=period,
-                    fourier_order=5
+                    name=period.get('name', f"custom_season_{period.get('period')}"),
+                    period=period.get('period'),
+                    fourier_order=period.get('fourier_order', 5)
                 )
     
     # Add country holidays if specified
@@ -618,34 +610,84 @@ def train_prophet_model(df, target_col, date_col, params=None, test_size=0.2):
     if country_holidays:
         model.add_country_holidays(country_name=country_holidays)
     
-    # Add extra regressors if specified in params
+    # Add regressors if specified
     regressors = params.get('regressors', [])
-    for regressor in regressors:
-        if regressor in data.columns:
-            prophet_data[regressor] = data[regressor].values
-            model.add_regressor(regressor)
+    if regressors:
+        logger.info(f"Adding regressors: {regressors}")
+        for reg in regressors:
+            if reg in data.columns:
+                # Copy the regressor data
+                reg_data = data[reg].copy()
+                
+                # Check for NaN values
+                if reg_data.isna().any():
+                    nan_count = reg_data.isna().sum()
+                    logger.warning(f"Found {nan_count} NaN values in regressor '{reg}', filling with mean")
+                    reg_mean = reg_data.mean()
+                    reg_data = reg_data.fillna(reg_mean)
+                
+                # Add to Prophet dataframe
+                prophet_data[reg] = reg_data
+                model.add_regressor(reg)
+                logger.info(f"Regressor '{reg}' added to Prophet model")
+            else:
+                logger.error(f"Requested regressor '{reg}' not found in dataframe")
+                raise ValueError(f"Regressor '{reg}' not found in dataframe")
+    
+    # Verify prophet_data contains all expected columns
+    logger.info(f"Prophet dataframe columns: {prophet_data.columns.tolist()}")
+    logger.info(f"Prophet dataframe shape: {prophet_data.shape}")
+    
+    # Split into train and test sets
+    train_size = int(len(prophet_data) * (1 - test_size))
+    train_data = prophet_data.iloc[:train_size]
+    test_data = prophet_data.iloc[train_size:]
+    
+    logger.info(f"Training on {len(train_data)} samples, testing on {len(test_data)} samples")
     
     # Fit the model
+    logger.info("Fitting Prophet model...")
     model.fit(train_data)
+    logger.info("Prophet model fitting complete")
     
-    # Create a dataframe for the test period to make predictions
+    # Create future dataframe and make predictions
+    logger.info("Making predictions...")
     future = model.make_future_dataframe(
         periods=len(test_data),
-        freq=params.get('freq', 'M')  # default to monthly
+        freq=params.get('freq', 'MS')  # MS for month start
     )
     
-    # Add regressor values to future dataframe if using regressors
-    for regressor in regressors:
-        if regressor in data.columns:
-            future[regressor] = pd.concat([data[regressor].reset_index(drop=True), 
-                                          pd.Series([np.nan] * (len(future) - len(data)))])
+    # Add regressor values to future dataframe
+    if regressors:
+        for reg in regressors:
+            if reg in data.columns:
+                # Calculate the mean of the regressor to use for future values
+                reg_mean = data[reg].mean()
+                
+                # For the existing data points, use the actual values
+                known_values = data[reg].values
+                
+                # For future points beyond our data, use the mean
+                unknown_values = np.full(len(future) - len(data), reg_mean)
+                
+                # Combine and assign to the future dataframe
+                future[reg] = pd.Series(
+                    np.concatenate([known_values, unknown_values]),
+                    index=future.index
+                )
+                
+                # Ensure no NaN values in regressor
+                if future[reg].isna().any():
+                    logger.warning(f"Found {future[reg].isna().sum()} NaN values in regressor '{reg}', filling with mean")
+                    future[reg] = future[reg].fillna(reg_mean)
     
     # Make predictions
     forecast = model.predict(future)
+    logger.info("Predictions complete")
     
-    # Extract predicted values for test set
-    y_pred = forecast['yhat'].iloc[train_size:].values
+    # Evaluate on test set
     y_true = test_data['y'].values
+    y_pred = forecast.iloc[train_size:]['yhat'].values
     
     # Calculate metrics
     mse = mean_squared_error(y_true, y_pred)
@@ -658,6 +700,8 @@ def train_prophet_model(df, target_col, date_col, params=None, test_size=0.2):
     
     # Calculate R²
     r2 = r2_score(y_true, y_pred)
+    
+    logger.info(f"Evaluation metrics - RMSE: {rmse:.4f}, MAE: {mae:.4f}, MAPE: {mape:.4f}%, R²: {r2:.4f}")
     
     # Prepare results
     result = {

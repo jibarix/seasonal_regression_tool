@@ -322,90 +322,48 @@ def run_pipeline(args):
     
     # Train and evaluate model
     if args.model_type == 'prophet':
-        # For Prophet, use the dedicated function
+        # For Prophet, use the dedicated function but with a simpler approach
         from models.modeling import train_prophet_model, plot_prophet_forecast, plot_prophet_components
         
         logger.info(f"Training Prophet model...")
         
-        # Extract the requested regressors from command line args
+        # Extract regressors from command line arguments
         regressors = []
         if args.prophet_regressors:
-            # Split by comma and strip any whitespace
             regressor_names = [name.strip() for name in args.prophet_regressors.split(',')]
+            logger.info(f"Requested regressors: {regressor_names}")
             
-            # Filter to only include those actually in the dataframe
-            regressors = [reg for reg in regressor_names if reg in df_reduced.columns]
-            logger.info(f"Using regressors for Prophet: {regressors}")
+            # Create a very simple dataframe with only what we need for Prophet
+            # Use the original data to ensure column names match exactly
+            prophet_df = pd.DataFrame()
+            prophet_df[args.date_col] = pd.to_datetime(df[args.date_col])
+            prophet_df[args.target_col] = df[args.target_col]
             
-            if len(regressors) < len(regressor_names):
-                missing = set(regressor_names) - set(regressors)
-                logger.warning(f"Could not find requested regressors: {missing}")
-                
-            # Add regressors to Prophet parameters
+            # Print all columns from original df
+            logger.info(f"All columns in original df: {df.columns.tolist()}")
+            
+            # Add regressors directly from original data if available
+            for reg in regressor_names:
+                if reg in df.columns:
+                    prophet_df[reg] = df[reg].values
+                    logger.info(f"Added regressor '{reg}' from original data")
+                    regressors.append(reg)
+                else:
+                    logger.warning(f"Regressor '{reg}' not found in original data, skipping")
+            
+            # Print columns in the prophet dataframe
+            logger.info(f"Columns in Prophet dataframe: {prophet_df.columns.tolist()}")
+            
+            # Update params with available regressors
             model_params['regressors'] = regressors
         
-        # To avoid issues, we need to create a simplified dataframe with just date, target, and regressors
-        prophet_df = pd.DataFrame()
-        prophet_df[args.date_col] = df_reduced[args.date_col]
-        prophet_df[args.target_col] = df_reduced[args.target_col]
-        
-        # Add regressor columns
-        for regressor in regressors:
-            if regressor in df_reduced.columns:
-                prophet_df[regressor] = df_reduced[regressor]
-        
+        # Train the model with the simplified dataframe
         model_results = train_prophet_model(
-            prophet_df,  # Use the simplified dataframe
+            prophet_df,
             target_col=args.target_col,
             date_col=args.date_col,
             params=model_params,
             test_size=args.test_size
-        )
-        
-        # Save plots if enabled
-        if not args.no_plots:
-            # Plot Prophet forecast
-            forecast_fig = plt.figure(figsize=(12, 6))
-            plt.plot(model_results['forecast']['ds'][-len(model_results['y_test']):], 
-                    model_results['y_test'].values, 'b-', label='Actual')
-            plt.plot(model_results['forecast']['ds'][-len(model_results['y_test']):], 
-                    model_results['y_test_pred'].values, 'r-', label='Forecast')
-            plt.fill_between(
-                model_results['forecast']['ds'][-len(model_results['y_test']):],
-                model_results['forecast']['yhat_lower'][-len(model_results['y_test']):],
-                model_results['forecast']['yhat_upper'][-len(model_results['y_test']):],
-                color='gray', alpha=0.2, label='Uncertainty Interval'
-            )
-            plt.legend()
-            plt.title(f"Prophet Model: Actual vs Forecast")
-            plt.tight_layout()
-            forecast_plot_path = os.path.join(model_output_dir, 'prophet_forecast.png')
-            forecast_fig.savefig(forecast_plot_path, dpi=300, bbox_inches='tight')
-            plt.close(forecast_fig)
-            
-            # Save components plots
-            components_fig = plt.figure(figsize=(12, 10))
-            from prophet.plot import plot_components
-            plot_components(model_results['model'], model_results['forecast'], figsize=(12, 10))
-            plt.tight_layout()
-            components_plot_path = os.path.join(model_output_dir, 'prophet_components.png')
-            components_fig.savefig(components_plot_path, dpi=300, bbox_inches='tight')
-            plt.close(components_fig)
-    else:
-        # For other models, use the existing function
-        model_results = train_and_evaluate(
-            df_reduced,
-            target_col=args.target_col,
-            feature_cols=selected_features,
-            date_col=args.date_col,
-            model_type=args.model_type,
-            params=model_params,
-            test_size=args.test_size,
-            use_cv=True,
-            n_cv_splits=args.cv_splits,
-            plot_results=not args.no_plots,
-            data_loader=data_loader,
-            frequency=frequency
         )
     
     # Save plots if enabled
