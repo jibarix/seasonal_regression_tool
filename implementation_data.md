@@ -30,7 +30,7 @@ The repository contains a data pipeline that collects and processes economic ind
 
 | Dataset | Description | Frequency | Units | Source | File Name/Series ID |
 |---------|-------------|-----------|-------|--------|---------------------|
-| auto_sales | Automobile and light truck sales | Monthly | Units | EDB Puerto Rico | I_AUTO.XLS (Sheet: AS01) |
+| auto_sales_sales | Automobile and light truck sales | Monthly | Units | EDB Puerto Rico | I_AUTO.XLS (Sheet: AS01) |
 | bankruptcies | Bankruptcy filings | Monthly | Count | EDB Puerto Rico | I_BANKRUPT.XLS (Sheet: BAN01) |
 | cement_production | Cement production | Monthly | 94lb. bags (000s) | EDB Puerto Rico | I_CEMENT.XLS (Sheet: CD01) |
 | electricity_consumption | Electric energy consumption | Monthly | mm kWh | EDB Puerto Rico | I_ENERGY.XLS (Sheet: EEC01) |
@@ -59,50 +59,6 @@ The repository contains a data pipeline that collects and processes economic ind
 | erp_sustainable | Equity risk premium (sustainable payout) | Monthly | Percentage | NYU Stern | ERPbymonth.xlsx (Sheet: Historical ERP) |
 | erp_t12m | Equity risk premium (T12M) | Monthly | Percentage | NYU Stern | ERPbymonth.xlsx (Sheet: Historical ERP) |
 
-## Data Collection Details
-
-| Process Step | Description | Implementation | Notes |
-|--------------|-------------|----------------|-------|
-| Fetching | Download of raw data from source | `download_excel()`, FRED API calls | Handles HTTP requests with error checking |
-| Extraction | Parsing raw data into structured format | `extract_data()`, specific sheet and cell references | Uses pandas for processing |
-| Transformation | Converting to standard schema | `process_data()` | Handles fiscal year conversion, data type conversion |
-| Loading | Storing in database | `insert_data()`, `smart_update()` | Uses Supabase PostgreSQL database |
-| Revision Tracking | Detecting and recording changes | `smart_update()` in data_tracker.py | Compares new values with existing records |
-| Export | Creating analysis-ready datasets | export_data.py | Combines all datasets with date alignment |
-
-## Database Schema
-
-| Table | Primary Key | Date Column | Value Columns | Related Tables | Creation Script |
-|-------|-------------|-------------|---------------|----------------|----------------|
-| auto_sales | id (SERIAL) | date (DATE) | sales (INTEGER) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| bankruptcies | id (SERIAL) | date (DATE) | filings (INTEGER) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| cement_production | id (SERIAL) | date (DATE) | production (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| electricity_consumption | id (SERIAL) | date (DATE) | consumption (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| gas_price | id (SERIAL) | date (DATE) | price (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| gas_consumption | id (SERIAL) | date (DATE) | consumption (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| labor_participation | id (SERIAL) | date (DATE) | rate (DECIMAL(6,2)) | data_revisions | config.py (PERCENT_TABLE_SQL_TEMPLATE) |
-| unemployment_rate | id (SERIAL) | date (DATE) | rate (DECIMAL(6,2)) | data_revisions | config.py (PERCENT_TABLE_SQL_TEMPLATE) |
-| employment_rate | id (SERIAL) | date (DATE) | rate (DECIMAL(6,2)) | data_revisions | config.py (PERCENT_TABLE_SQL_TEMPLATE) |
-| unemployment_claims | id (SERIAL) | date (DATE) | claims (INTEGER) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| trade_employment | id (SERIAL) | date (DATE) | employment (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| consumer_price_index | id (SERIAL) | date (DATE) | index (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| transportation_price_index | id (SERIAL) | date (DATE) | index (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| retail_sales | id (SERIAL) | date (DATE) | sales (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| imports | id (SERIAL) | date (DATE) | value (DECIMAL(12,2)) | data_revisions | config.py (MONTHLY_TABLE_SQL_TEMPLATE) |
-| federal_funds_rate | id (SERIAL) | date (DATE) | rate (DECIMAL(12,3)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| auto_manufacturing_orders | id (SERIAL) | date (DATE) | orders (DECIMAL(12,2)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| used_car_retail_sales | id (SERIAL) | date (DATE) | sales (DECIMAL(12,2)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| domestic_auto_inventories | id (SERIAL) | date (DATE) | inventories (DECIMAL(12,3)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| domestic_auto_production | id (SERIAL) | date (DATE) | production (DECIMAL(12,1)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| liquidity_credit_facilities | id (SERIAL) | date (DATE) | facilities (DECIMAL(12,1)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| semiconductor_manufacturing_units | id (SERIAL) | date (DATE) | units (DECIMAL(12,4)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| aluminum_new_orders | id (SERIAL) | date (DATE) | orders (DECIMAL(12,1)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| real_gdp | id (SERIAL) | date (DATE) | value (DECIMAL(12,2)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| gdp_now_forecast | id (SERIAL) | date (DATE) | forecast (DECIMAL(12,4)) | data_revisions | fred_config.py (FRED_TABLE_SQL_TEMPLATE) |
-| equity_risk_premium | id (SERIAL) | date (DATE) | tbond_rate, erp_sustainable, erp_t12m (DECIMAL(6,4)) | data_revisions | nyu_config.py (NYU_STERN_TABLE_SQL) |
-| data_revisions | id (SERIAL) | data_date (DATE) | dataset, value_field, old_value, new_value, revision_date | All above tables | data_tracker.py (initialize_revision_table) |
-| scraper_metadata | dataset (VARCHAR) | last_run (TIMESTAMP) | N/A | All above tables | models.py (initialize_tables) |
-
 ## Important Note on GDP Indicators
 
 The dataset includes two different GDP-related indicators that should not be confused:
@@ -113,26 +69,26 @@ The dataset includes two different GDP-related indicators that should not be con
 
 These two indicators measure very different aspects of economic performance and cannot be directly compared. Real GDP measures the absolute size of the economy, while GDP Now measures the expected rate of change. For time series analysis and forecasting, it's essential to use these indicators correctly according to their units and what they represent.
 
-## Data Processing Tools
+## Data Characteristics
 
-| Tool | Purpose | Key Features | Input/Output |
-|------|---------|--------------|--------------|
-| main.py | Data collection orchestration | Runs all scrapers, handles errors | Inputs: API keys, URLs; Outputs: Database updates |
-| view_data.py | Data exploration | View latest data, dataset summaries, revisions | Inputs: Dataset name; Outputs: Console display, optional plots |
-| export_data.py | Create combined datasets | Merges all datasets with date alignment | Inputs: Optional date range; Outputs: CSV file |
-| forecast.py | Basic linear regression forecasting | Variable selection, diagnostics | Inputs: CSV data, target variable; Outputs: Model, plots, reports |
-| prophet_forecast.py | Advanced time series forecasting | Seasonal decomposition, component analysis | Inputs: CSV data, target variable; Outputs: Forecasts, plots |
-| regression_forecast.py | Seasonal pattern analysis | Multiple seasonality representations | Inputs: CSV data, target variable; Outputs: Comparative analysis |
+### Time Range
+- The dataset spans from January 2014 to March 2025
+- Most indicators have consistent monthly observations, with some gaps during economic disruptions
 
-## Data Quality Controls
+### Data Quality
+- Some indicators have seasonal patterns that must be accounted for in modeling
+- Economic shocks (like the COVID-19 pandemic in 2020) create outliers in many series
+- Some indicators have missing values, particularly in earlier periods
+- The data exhibits varying degrees of stationarity across different series
 
-| Process | Implementation | Purpose | Notes |
-|---------|----------------|---------|-------|
-| Revision Tracking | data_tracker.smart_update() | Detect and record data changes | Maintains audit trail of all data modifications |
-| Float Precision Tolerance | 0.001 threshold | Avoid false positives for revisions | Small rounding differences ignored |
-| Schema Validation | Supabase types, pandas conversion | Ensure data type consistency | Automatic numeric conversions with error handling |
-| Error Recovery | Exception handling, logging | Prevent pipeline failures | Detailed logging for troubleshooting |
-| Data Verification | view_data.py | Manual inspection capabilities | Interactive CLI for data exploration |
-| Multicollinearity Detection | VIF analysis | Improve model reliability | Automatic detection in forecasting tools |
+### Potential Use Cases
+- Forecasting economic indicators for Puerto Rico
+- Analyzing relationships between U.S. national and Puerto Rico regional economic factors
+- Studying the impact of external shocks on various economic sectors
+- Building composite indicators for economic activity
 
-This comprehensive overview provides a detailed picture of all datasets, their sources, structure, and the tools used to process them. The consistent level of detail across all tables helps understand the complete data pipeline from collection to analysis. Special attention should be paid to the GDP indicators to ensure proper interpretation based on their different units and meanings.
+### Preprocessing Considerations
+- Seasonal adjustment may be necessary for many indicators
+- Transformation (such as log transformations) are recommended for some indicators with exponential patterns
+- Outlier detection and treatment should be considered, especially around known economic disruptions
+- Indicators have different scales and units, requiring normalization for certain types of analysis
