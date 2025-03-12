@@ -9,24 +9,32 @@ Specifies the path to the CSV file containing your time series data. The file sh
 
 **Example**: `--data-file data_input_sample.csv`
 
+**Technical details**: The pipeline automatically handles various date formats and performs necessary conversions. It also validates data integrity and provides informative messages about the dataset characteristics.
+
 ### `--target-col` (Required)
 Defines which column in your dataset should be forecasted. This is the dependent variable in your model.
 
 **Example**: `--target-col auto_sales`
 
+**Technical details**: The pipeline automatically performs validation checks on the target column, such as checking for sufficient non-missing values and appropriate data types. Transformations applied to features are not automatically applied to the target variable to preserve its original scale.
+
 ### `--date-col`
-Specifies the column that contains date information. This column is used for time-based splitting, seasonal feature generation, and visualization.
+Specifies the column that contains date information. This column is used for time-based splitting, seasonal feature generation, visualization, and automatic frequency detection.
 
 **Default**: `date`
 
 **Example**: `--date-col time_stamp`
 
+**Technical details**: The date column is converted to pandas datetime format and is used to derive time-based features. The pipeline intelligently examines the date patterns to detect the data frequency (monthly, quarterly, annual), which then influences how features are generated and how missing values are handled.
+
 ### `--output-dir`
-Defines where results, visualizations, and model artifacts will be saved. The pipeline creates a timestamped directory within this location for each run.
+Defines where results, visualizations, and model artifacts will be saved. The pipeline creates a timestamped directory within this location for each run, ensuring that multiple runs don't overwrite previous results.
 
 **Default**: `results`
 
 **Example**: `--output-dir my_forecasts`
+
+**Technical details**: The timestamped directory includes a log file with detailed information about the pipeline run, making it easier to track and diagnose issues. If the directory doesn't exist, it will be created automatically.
 
 ## Feature Engineering Options
 
@@ -42,7 +50,7 @@ For time series with multiple seasonal patterns, you can specify multiple period
 
 **Example**: `--fourier-periods 12,4,3`
 
-**Technical details**: Fourier terms use sine and cosine functions to model cyclical patterns. They offer a flexible way to model seasonality without requiring dummy variables for each time period. The transformation converts a time index into smooth cyclical features.
+**Technical details**: Fourier terms use sine and cosine functions to model cyclical patterns. They offer a flexible way to model seasonality without requiring dummy variables for each time period. The implementation automatically determines if the data already contains specific seasonal encodings (like quarter dummies) and adjusts the Fourier terms accordingly to avoid redundancy. When quarterly dummies are detected, the pipeline will only generate Fourier terms for non-quarterly seasonal patterns.
 
 ### `--fourier-harmonics`
 Controls the complexity of seasonal patterns modeled by Fourier terms. Higher values capture more complex seasonal patterns but increase the risk of overfitting.
@@ -56,7 +64,7 @@ Controls the complexity of seasonal patterns modeled by Fourier terms. Higher va
 
 **Example**: `--fourier-harmonics 3`
 
-**Technical details**: Each harmonic adds one pair of sine and cosine terms. With a period of 12 and 2 harmonics, the pipeline generates 4 Fourier terms (sin_12_1, cos_12_1, sin_12_2, cos_12_2). These terms collectively model the seasonal pattern's shape.
+**Technical details**: Each harmonic adds one pair of sine and cosine terms. With a period of 12 and 2 harmonics, the pipeline generates 4 Fourier terms (sin_12_1, cos_12_1, sin_12_2, cos_12_2). These terms collectively model the seasonal pattern's shape. The implementation handles edge cases such as insufficient data for higher harmonics and automatically adjusts the number of harmonics based on available data points if necessary.
 
 ### `--max-lag`
 Defines the maximum number of lagged values to create for the target variable and key indicators. Lagged values capture temporal dependencies in the data.
@@ -70,7 +78,7 @@ Setting appropriate lags helps the model learn from recent history. The appropri
 
 **Example**: `--max-lag 6`
 
-**Technical details**: Lags are essential for time series forecasting as they encode the time-based relationships. Instead of using autoregressive modeling directly, lags transform the time series problem into a supervised learning problem that works with traditional machine learning algorithms.
+**Technical details**: The pipeline intelligently selects which variables to create lags for, focusing on the target variable and key indicators identified through column name analysis (variables containing terms like 'sales', 'rate', 'price', 'index', etc.). This selective approach maintains a manageable feature space while capturing the most relevant temporal relationships. The implementation handles missing values that result from lagging by using appropriate imputation strategies.
 
 ### `--use-log`
 Applies logarithmic transformation to appropriate numeric features. This is useful for data with exponential growth patterns or features with skewed distributions.
@@ -81,7 +89,7 @@ Log transformation helps stabilize variance and can make multiplicative relation
 
 **Example**: `--use-log` (flag to enable)
 
-**Technical details**: When enabled, the pipeline applies log transformation to variables that typically benefit from it, particularly those related to volume, sales, prices, and production. A small offset is automatically added to handle zeros or negative values.
+**Technical details**: When enabled, the pipeline selectively applies log transformation to variables that typically benefit from it, particularly those related to volume, sales, prices, and production. A dynamic offset is automatically calculated for each variable to handle zeros or negative values. For a column with minimum value -5, the offset would automatically be adjusted to at least 6 to ensure all values become positive before taking the logarithm. The target variable is not log-transformed by default to maintain interpretability, but the model can still capture relationships with log-transformed predictors.
 
 ### `--respect-existing-features`
 Instructs the pipeline to preserve and use existing date-derived features in the dataset instead of regenerating them. This is useful when your dataset already contains specially engineered temporal features.
@@ -90,7 +98,7 @@ Instructs the pipeline to preserve and use existing date-derived features in the
 
 **Example**: `--respect-existing-features` (flag to enable)
 
-**Technical details**: When enabled, the pipeline checks for existing time-related columns (year, month, quarter, etc.) and uses them rather than creating new ones. This allows for preserving domain-specific seasonal encodings that might be present in the dataset.
+**Technical details**: When enabled, the pipeline checks for existing time-related columns (year, month, quarter, quarter dummies, etc.) and uses them rather than creating new ones. This allows for preserving domain-specific seasonal encodings that might be present in the dataset. The implementation dynamically adjusts other feature engineering processes based on which features already exist. For example, if quarter dummies (Q1, Q2, Q3, Q4) are detected, the pipeline will only generate Fourier terms for non-quarterly seasonality.
 
 ## Dimension Reduction Options
 
@@ -103,7 +111,7 @@ This is particularly useful when dealing with many features or highly correlated
 
 **Example**: `--use-pca` (flag to enable)
 
-**Technical details**: PCA finds the directions (principal components) that maximize the variance in the feature space. The implementation automatically standardizes the data before applying PCA to ensure all features contribute equally regardless of their scale.
+**Technical details**: Before applying PCA, the pipeline automatically filters out highly correlated features (correlation > 0.95) to avoid multicollinearity issues. The implementation standardizes the data before applying PCA to ensure all features contribute equally regardless of their scale. The PCA process includes a sophisticated analysis of component loadings, which traces each principal component back to the original features to maintain interpretability. If feature selection after PCA yields insufficient features, the pipeline includes fallback mechanisms to ensure a viable model can still be trained.
 
 ### `--pca-variance`
 Defines the proportion of variance that should be preserved when selecting principal components. Higher values retain more information but use more components.
@@ -116,7 +124,7 @@ Defines the proportion of variance that should be preserved when selecting princ
 
 **Example**: `--pca-variance 0.9`
 
-**Technical details**: The pipeline automatically determines how many components to keep based on the cumulative explained variance ratio. It selects the minimum number of components needed to exceed the specified threshold.
+**Technical details**: The pipeline first calculates the full PCA decomposition and then analyzes the cumulative explained variance to determine how many components to keep. It selects the minimum number of components needed to exceed the specified threshold. The implementation includes detailed logging of the variance explained by each component, which is useful for diagnosing issues with feature representation. Additionally, a variance plot is generated to visualize the explained variance distribution across components.
 
 ### `--feature-selection`
 Specifies the method used to select the most relevant features for modeling. Different methods capture different aspects of the relationship between features and the target.
@@ -129,7 +137,7 @@ Specifies the method used to select the most relevant features for modeling. Dif
 
 **Example**: `--feature-selection f_regression`
 
-**Technical details**: Feature selection helps simplify the model, reduce noise, and improve interpretability. The implementation handles missing values and properly scales features when required by the selection method.
+**Technical details**: Feature selection helps simplify the model, reduce noise, and improve interpretability. The implementation handles missing values appropriately for each method and includes fallback mechanisms if a method fails to select enough features. For Lasso-based selection, the implementation adjusts the regularization strength as needed to ensure a suitable number of features are selected. If all feature selection methods fail, the pipeline falls back to using original numeric features to ensure robustness.
 
 ### `--top-n-features`
 Defines the maximum number of features to select after the feature selection process. This limits model complexity and focuses on the most important predictors.
@@ -138,7 +146,7 @@ Defines the maximum number of features to select after the feature selection pro
 
 **Example**: `--top-n-features 10`
 
-**Technical details**: The pipeline ranks features by importance according to the selected feature selection method and keeps only the top N. If PCA is used, this parameter determines how many principal components to retain in the final model.
+**Technical details**: The pipeline ranks features by importance according to the selected feature selection method and keeps only the top N. If PCA is used, this parameter determines how many principal components to retain in the final model. If feature selection yields fewer than the specified number, all selected features are used. The implementation includes appropriate handling of edge cases such as when feature selection methods return insufficient features.
 
 ## Modeling Options
 
@@ -156,7 +164,7 @@ Specifies the machine learning algorithm to use for forecasting. Each model has 
 
 **Example**: `--model-type gbm`
 
-**Technical details**: Model selection should align with your data characteristics and interpretation needs. Linear models offer better interpretability, while tree-based models often provide higher accuracy for complex relationships.
+**Technical details**: Model selection should align with your data characteristics and interpretation needs. The implementation includes pre-configured parameter settings for each model type that work well across a range of forecasting problems. For regularized models (ridge, lasso, elasticnet), the pipeline automatically handles standardization of features. For tree-based models (randomforest, gbm), the pipeline extracts and visualizes feature importance. The implementation includes appropriate error handling for each model type and detailed logging of model parameters and performance metrics.
 
 ### `--test-size`
 Determines what proportion of data to reserve for the final model evaluation. This data is not used during model training.
@@ -169,7 +177,7 @@ Determines what proportion of data to reserve for the final model evaluation. Th
 
 **Example**: `--test-size 0.15`
 
-**Technical details**: Since this is time series data, the split is always performed chronologically, with the most recent data in the test set. This mimics the real-world forecasting scenario where you predict future values based on historical data.
+**Technical details**: Since this is time series data, the split is always performed chronologically, with the most recent data in the test set. This mimics the real-world forecasting scenario where you predict future values based on historical data. The implementation ensures that the training set contains enough data points to properly capture seasonal patterns based on the data frequency. If the test size would result in too few training samples, a warning is logged and the test size is automatically adjusted.
 
 ### `--cv-splits`
 Defines the number of folds to use in time series cross-validation. Each fold creates a different train/validation split point for model evaluation.
@@ -180,7 +188,7 @@ More splits provide a more robust estimate of model performance but increase com
 
 **Example**: `--cv-splits 3`
 
-**Technical details**: Unlike standard cross-validation, time series cross-validation respects the temporal order of observations. Each validation set consists of a continuous time period that follows its respective training set. The implementation uses the `TimeSeriesSplit` from scikit-learn.
+**Technical details**: Unlike standard cross-validation, time series cross-validation respects the temporal order of observations. Each validation set consists of a continuous time period that follows its respective training set. The implementation uses the `TimeSeriesSplit` from scikit-learn with appropriate configuration for time series data. The pipeline ensures that each training fold has enough data to properly capture seasonal patterns and applies consistent preprocessing across folds.
 
 ### `--no-plots`
 Disables the generation of diagnostic plots and visualizations. This can be useful for batch processing or when running on systems without display capabilities.
@@ -189,38 +197,78 @@ Disables the generation of diagnostic plots and visualizations. This can be usef
 
 **Example**: `--no-plots` (flag to enable)
 
-**Technical details**: When plots are enabled, the pipeline generates visualizations for actual vs. predicted values, residual analysis, feature importance, and, if applicable, PCA variance explained. These are saved in the output directory.
+**Technical details**: When plots are enabled, the pipeline generates visualizations for actual vs. predicted values, residual analysis (including histogram, QQ plot, and autocorrelation plot), feature importance or coefficients, and, if applicable, PCA variance explained. Even when plots are disabled, the pipeline still calculates all diagnostic statistics and includes them in the model summary. Plots are automatically saved to the output directory with appropriate naming for easy reference.
 
-## Advanced Usage Examples
+## Advanced Usage Scenarios
 
-### Forecasting with Complex Seasonality
+### Handling Multiple Seasonal Patterns
+
+For data with multiple seasonal patterns (e.g., daily data with weekly and annual patterns), you can specify multiple periods in the Fourier terms:
+
 ```bash
-python main.py --data-file data_input_sample.csv --target-col auto_sales --fourier-periods 12,4,6 --fourier-harmonics 3 --max-lag 12
+python main.py --data-file daily_data.csv --target-col sales --fourier-periods 7,365 --fourier-harmonics 3
 ```
-This configuration models three different seasonal patterns (annual, quarterly, and biannual) with complex shapes (3 harmonics) and captures a full year of lagged dependencies.
 
-### High-Accuracy Nonlinear Forecasting
+This captures both weekly seasonality (period=7) and annual seasonality (period=365). The harmonic parameter controls how complex each seasonal pattern can be, with higher values allowing more complex shapes.
+
+### Dealing with High Cardinality Features
+
+When your dataset contains many categorical variables with high cardinality, consider this approach:
+
 ```bash
-python main.py --data-file data_input_sample.csv --target-col imports_value --model-type gbm --use-log --max-lag 6 --feature-selection mutual_info --top-n-features 15
+python main.py --data-file data.csv --target-col target --use-pca --pca-variance 0.9 --top-n-features 15
 ```
-This setup uses Gradient Boosting with log-transformed features and mutual information feature selection to capture complex nonlinear patterns in import values.
 
-### Highly Interpretable Model with PCA
+This configuration applies PCA to reduce dimensionality while preserving 90% of the variance, then selects the top 15 most informative components or features. This is particularly useful when one-hot encoding has created a large feature space.
+
+### Forecasting Highly Volatile Series
+
+For volatile series with irregular patterns, consider using tree-based models with more lags:
+
 ```bash
-python main.py --data-file data_input_sample.csv --target-col federal_funds_rate_rate --use-pca --pca-variance 0.9 --model-type elasticnet --feature-selection lasso --no-plots
+python main.py --data-file volatile_data.csv --target-col price --model-type gbm --max-lag 12 --no-pca
 ```
-This configuration creates an interpretable ElasticNet model on PCA-transformed features, with additional feature selection through Lasso to identify the most important components affecting federal funds rates.
 
-## Practical Considerations
+This uses gradient boosting with a longer lag structure to capture complex temporal dependencies, without applying PCA to preserve the original feature space which may contain important signals.
 
-1. **For large datasets**: Consider using `--use-pca` and limiting the features with `--top-n-features` to improve performance.
+### Interpretable Models for Business Insights
 
-2. **For noisy data**: Increase regularization by using `ridge`, `lasso`, or `elasticnet` models.
+When explanation is more important than raw prediction accuracy:
 
-3. **For capturing long-term dependencies**: Increase `--max-lag` to include more historical values.
+```bash
+python main.py --data-file business_data.csv --target-col revenue --model-type lasso --feature-selection f_regression --top-n-features 10
+```
 
-4. **For complex seasonal patterns**: Increase `--fourier-harmonics` and include all relevant seasonal periods in `--fourier-periods`.
+This creates a sparse linear model with only the most statistically significant predictors, making it easier to explain relationships to stakeholders.
 
-5. **For highly interpretable results**: Use `linear` or `lasso` models without PCA and examine the coefficients.
+## Error Handling and Edge Cases
 
-Understanding these options allows you to tailor the forecasting pipeline to your specific data characteristics and business requirements.
+The pipeline implements several safeguards to ensure robustness:
+
+1. **Missing value detection and imputation**: Intelligently handles missing values using context-aware strategies (group-based imputations for time series data).
+
+2. **Data validation**: Checks for sufficient data points, valid date ranges, and appropriate data types before processing.
+
+3. **Feature correlation filtering**: Automatically detects and removes highly correlated features that could cause instability.
+
+4. **Frequency detection**: Automatically detects data frequency (monthly, quarterly, annual) and adjusts feature engineering accordingly.
+
+5. **Fallback mechanisms**: If feature selection or dimension reduction fails to yield sufficient features, the pipeline falls back to simpler approaches to ensure a model can still be trained.
+
+6. **Log transformation safeguards**: Automatically adjusts offsets for log transformations to handle zeros and negative values.
+
+7. **MAPE calculation protection**: Handles zero values in the denominator when calculating Mean Absolute Percentage Error.
+
+8. **Residual analysis**: Performs advanced diagnostic tests for autocorrelation (Ljung-Box and Durbin-Watson) with appropriate interpretation.
+
+## Performance Considerations
+
+- **For large datasets** (>100,000 rows): Consider using `--no-plots` to reduce memory usage and processing time.
+
+- **For high-dimensional data** (many features): Use correlation filtering and PCA to reduce dimensionality before modeling.
+
+- **For computationally intensive models** (like GBM with many features): Reduce `--cv-splits` to 3 to decrease training time.
+
+- **For memory-constrained environments**: Reduce `--top-n-features` and avoid using tree-based models with very deep trees.
+
+Understanding these options allows you to tailor the forecasting pipeline to your specific data characteristics, computational resources, and business requirements.
